@@ -38,17 +38,33 @@ export class PeerManager {
     // 动态导入 PeerJS
     const Peer = (await import('peerjs')).default
     
+    // 本地开发时使用本地信令服务器，生产环境使用 PeerJS 云服务器
+    const isLocal = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    
+    const peerOptions: any = {
+      debug: 2,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.qq.com' },
+          { urls: 'stun:stun.miwifi.com' },
+          { urls: 'stun:stun.l.google.com:19302' },
+        ]
+      }
+    }
+    
+    if (isLocal) {
+      // 本地信令服务器 (npx tsx src/peer-server.ts)
+      peerOptions.host = 'localhost'
+      peerOptions.port = 9000
+      peerOptions.path = '/'
+      peerOptions.secure = false
+      console.log('[PeerManager] 使用本地信令服务器 ws://localhost:9000')
+    } else {
+      console.log('[PeerManager] 使用 PeerJS 云服务器')
+    }
+    
     return new Promise((resolve, reject) => {
-      this.peer = new Peer(this.peerId, {
-        debug: 2,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.qq.com' },
-            { urls: 'stun:stun.miwifi.com' },
-            { urls: 'stun:stun.l.google.com:19302' },
-          ]
-        }
-      })
+      this.peer = new Peer(this.peerId, peerOptions)
 
       this.peer.on('open', (id: string) => {
         this.peerId = id
