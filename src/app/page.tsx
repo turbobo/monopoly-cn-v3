@@ -207,10 +207,8 @@ export default function MonopolyGame() {
   const executeOnlineTurnRef = useRef(executeOnlineTurn)
   useEffect(() => { executeOnlineTurnRef.current = executeOnlineTurn }, [executeOnlineTurn])
 
-  useEffect(() => {
-    const peer = peerRef.current
-    if (!peer) return
-
+  // ===== 注册 PeerJS 消息处理 =====
+  const setupPeerHandlers = useCallback((peer: PeerManager) => {
     const messageHandler = (message: PeerMessage, fromPeerId: string) => {
       switch (message.type) {
         case 'player-join': {
@@ -242,6 +240,7 @@ export default function MonopolyGame() {
               name: p.name,
               isHost: p.isHost,
             }))
+            playersRef.current = players
             setOnlinePlayers(players)
           }
           break
@@ -320,13 +319,8 @@ export default function MonopolyGame() {
       }
     }
 
-    const removeMessageHandler = peer.onMessage(messageHandler)
-    const removeDisconnectionHandler = peer.onDisconnection(disconnectionHandler)
-
-    return () => {
-      removeMessageHandler()
-      removeDisconnectionHandler()
-    }
+    peer.onMessage(messageHandler)
+    peer.onDisconnection(disconnectionHandler)
   }, [broadcastState])
 
   // ===== 创建房间 =====
@@ -343,6 +337,7 @@ export default function MonopolyGame() {
       await peer.initialize(playerName)
       peerRef.current = peer
       peer.setIsHost(true)
+      setupPeerHandlers(peer)
 
       const id = peer.getRoomId()
       setRoomId(id)
@@ -379,6 +374,7 @@ export default function MonopolyGame() {
       await peer.initialize(playerName)
       peerRef.current = peer
       peer.setIsHost(false)
+      setupPeerHandlers(peer)
 
       await peer.connectToRoom(joinRoomId.trim())
       setRoomId(joinRoomId.trim())
