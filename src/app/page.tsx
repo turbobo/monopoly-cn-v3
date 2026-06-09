@@ -46,6 +46,7 @@ export default function MonopolyGame() {
   const [diceResult, setDiceResult] = useState<number | null>(null)
   const [buyPrompt, setBuyPrompt] = useState<{ tile: typeof BOARD[0] } | null>(null)
   const [paused, setPaused] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [muted, setMutedState] = useState(false)
 
   // 在线模式状态
@@ -971,14 +972,20 @@ export default function MonopolyGame() {
                   <div className="text-lg font-mono text-orange-400 font-bold break-all select-all cursor-pointer"
                     onClick={() => {
                       navigator.clipboard.writeText(roomId)
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 1500)
                     }}>
                     {roomId}
                   </div>
                   <button
-                    onClick={() => navigator.clipboard.writeText(roomId)}
-                    className="mt-2 text-xs text-blue-400 hover:text-blue-300"
+                    onClick={() => {
+                      navigator.clipboard.writeText(roomId)
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 1500)
+                    }}
+                    className={`mt-2 text-xs transition-all duration-300 ${copied ? 'text-green-400 scale-110' : 'text-blue-400 hover:text-blue-300'}`}
                   >
-                    📋 点击复制
+                    {copied ? '✅ 已复制' : '📋 点击复制'}
                   </button>
                 </div>
               </div>
