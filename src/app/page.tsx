@@ -251,7 +251,25 @@ export default function MonopolyGame() {
             const { game: newGame, messages: newMsgs } = message.payload
             setGame(newGame)
             setMessages(newMsgs)
+            setRolling(false)  // 收到新状态后重置掷骰状态
+            // 收到游戏状态时自动进入游戏画面
+            if (newGame && screen !== 'game' && screen !== 'end') {
+              setScreen('game')
+              setBuyPrompt(null)
+              setDiceResult(null)
+            }
             if (newGame.gameOver) setScreen('end')
+
+            // 如果是自己的回合且需要购买决策，显示购买提示
+            if (newGame && !newGame.gameOver && newGame.phase === 'action') {
+              const buyer = newGame.players[newGame.currentPlayer]
+              if (buyer && buyer.name === myNameRef.current) {
+                const tile = BOARD[buyer.position]
+                setBuyPrompt({ tile })
+              }
+            } else {
+              setBuyPrompt(null)
+            }
 
             const lastMsg = newMsgs[newMsgs.length - 1] || ''
             if (lastMsg.includes('掷出')) playDiceLand()
