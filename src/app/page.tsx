@@ -33,7 +33,7 @@ export default function MonopolyGame() {
   const myNameRef = useRef('')
   const buyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const playersRef = useRef<OnlinePlayer[]>([])
-
+  const screenRef = useRef<Screen>('menu')
   // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
   const [mode, setMode] = useState<GameMode>('local')
@@ -65,6 +65,7 @@ export default function MonopolyGame() {
   useEffect(() => { onlinePlayersRef.current = onlinePlayers }, [onlinePlayers])
   useEffect(() => { myNameRef.current = playerName }, [playerName])
   useEffect(() => { playersRef.current = onlinePlayers }, [onlinePlayers])
+  useEffect(() => { screenRef.current = screen }, [screen])
 
   // 初始化 Canvas
   useEffect(() => {
@@ -292,7 +293,7 @@ export default function MonopolyGame() {
             setMessages(newMsgs)
             setRolling(false)  // 收到新状态后重置掷骰状态
             // 收到游戏状态时自动进入游戏画面
-            if (newGame && screen !== 'game' && screen !== 'end') {
+            if (newGame && screenRef.current !== 'game' && screenRef.current !== 'end') {
               setScreen('game')
               setBuyPrompt(null)
               setDiceResult(null)

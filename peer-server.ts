@@ -7,8 +7,8 @@ const PORT = 9000
 
 PeerServer({
   port: PORT,
-  path: '/',
+  path: '/peerjs',
 }, () => {
-  console.log(`🔌 PeerJS 信令服务器已启动: ws://localhost:${PORT}`)
+  console.log(`🔌 PeerJS 信令服务器已启动: ws://localhost:${PORT}/peerjs`)
   console.log('   保持此终端运行，在另一个终端启动 npm run dev')
 })

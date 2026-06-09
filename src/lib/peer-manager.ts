@@ -1,5 +1,12 @@
 // PeerJS WebRTC 连接管理器
-// 用于在线多人模式，无需后端服务器
+// 用于在线多人模式
+
+// ===== 生产环境信令服务器配置 =====
+// 部署到 Render 后，将下面的域名替换为你的 Render 服务地址
+const PROD_PEER_HOST = '0.peerjs.com'   // 例如: 'monopoly-peerjs.onrender.com'
+const PROD_PEER_PORT = 443
+const PROD_PEER_PATH = '/'               // 例如: '/peerjs'
+const PROD_PEER_SECURE = true
 
 export interface PeerMessage {
   type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled'
@@ -23,17 +30,30 @@ export class PeerManager {
   private messageHandlers: MessageHandler[] = []
   private connectionHandlers: ConnectionHandler[] = []
   private disconnectionHandlers: ConnectionHandler[] = []
+  private errorHandlers: ((err: any) => void)[] = []
   private isHost: boolean = false
   private roomId: string = ''
   private playerName: string = ''
   private peerId: string = ''
+  private initialized: boolean = false
 
   constructor() {}
 
+  // 生成短房间号（6位字母数字）
+  private generateShortId(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    let result = ''
+    for (let i = 0; i < 6; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return result
+  }
+
   // 初始化 PeerJS 实例
-  async initialize(name: string): Promise<string> {
+  async initialize(name: string, customId?: string): Promise<string> {
     this.playerName = name
-    this.peerId = `monopoly-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    // 使用自定义 ID 或生成短 ID（房主用短 ID，guest 用随机 ID）
+    this.peerId = customId || `monopoly-${this.generateShortId()}`
     
     // 动态导入 PeerJS
     const Peer = (await import('peerjs')).default
@@ -48,19 +68,25 @@ export class PeerManager {
           { urls: 'stun:stun.qq.com' },
           { urls: 'stun:stun.miwifi.com' },
           { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
         ]
       }
     }
     
     if (isLocal) {
-      // 本地信令服务器 (npx peerjs --port 9000)
+      // 本地信令服务器 (npm run peer 或 npm run dev:all)
       peerOptions.host = 'localhost'
       peerOptions.port = 9000
       peerOptions.path = '/peerjs'
       peerOptions.secure = false
       console.log('[PeerManager] 使用本地信令服务器 ws://localhost:9000/peerjs')
     } else {
-      console.log('[PeerManager] 使用 PeerJS 云服务器')
+      // 生产环境：使用自行部署的信令服务器（Render）
+      peerOptions.host = PROD_PEER_HOST
+      peerOptions.port = PROD_PEER_PORT
+      peerOptions.path = PROD_PEER_PATH
+      peerOptions.secure = PROD_PEER_SECURE
+      console.log(`[PeerManager] 使用信令服务器 ${PROD_PEER_HOST}`)
     }
     
     return new Promise((resolve, reject) => {
@@ -68,13 +94,20 @@ export class PeerManager {
 
       this.peer.on('open', (id: string) => {
         this.peerId = id
+        this.initialized = true
         console.log('[PeerManager] Peer opened with ID:', id)
         resolve(id)
       })
 
       this.peer.on('error', (err: any) => {
-        console.error('[PeerManager] Peer error:', err)
-        reject(err)
+        console.error('[PeerManager] Peer error:', err.type, err.message || err)
+        if (!this.initialized) {
+          // 还没 open 过，说明是初始化阶段的错误
+          reject(err)
+        } else {
+          // 已初始化后的错误（如 peer-unavailable），通知上层处理
+          this.errorHandlers.forEach(h => h(err))
+        }
       })
 
       this.peer.on('connection', (conn: any) => {
@@ -83,8 +116,18 @@ export class PeerManager {
 
       this.peer.on('disconnected', () => {
         console.log('[PeerManager] Peer disconnected, attempting reconnect...')
-        this.peer.reconnect()
+        if (!this.peer.destroyed) {
+          this.peer.reconnect()
+        }
       })
+
+      // 初始化超时
+      setTimeout(() => {
+        if (!this.initialized) {
+          this.peer.destroy()
+          reject(new Error('连接信令服务器超时，请检查网络或信令服务器是否运行'))
+        }
+      }, 10000)
     })
   }
 
@@ -122,9 +165,31 @@ export class PeerManager {
     this.roomId = roomId
 
     return new Promise((resolve, reject) => {
+      let settled = false
+      const settle = (fn: () => void) => {
+        if (!settled) { settled = true; fn() }
+      }
+
+      // 监听 Peer 级别的错误（如 peer-unavailable：目标不存在）
+      const peerErrorHandler = (err: any) => {
+        if (err.type === 'peer-unavailable') {
+          settle(() => reject(new Error('房间不存在或房主已离线，请确认房间号')))
+        } else {
+          settle(() => reject(new Error(`连接失败: ${err.type || err.message}`)))
+        }
+      }
+      this.errorHandlers.push(peerErrorHandler)
+
       const conn = this.peer.connect(hostPeerId, { reliable: true })
+
+      if (!conn) {
+        settle(() => reject(new Error('无法创建连接，请检查网络')))
+        return
+      }
       
       conn.on('open', () => {
+        // 连接成功，移除临时错误处理
+        this.errorHandlers = this.errorHandlers.filter(h => h !== peerErrorHandler)
         this.connections.set(hostPeerId, conn)
         this.connectionHandlers.forEach(h => h(hostPeerId))
         
@@ -136,7 +201,7 @@ export class PeerManager {
           timestamp: Date.now(),
         })
         
-        resolve()
+        settle(() => resolve())
       })
 
       conn.on('data', (data: PeerMessage) => {
@@ -154,16 +219,17 @@ export class PeerManager {
 
       conn.on('error', (err: any) => {
         console.error('[PeerManager] Connect error:', err)
-        reject(err)
+        settle(() => reject(new Error(`连接错误: ${err.message || err.type || '未知'}`)))
       })
 
       // 超时处理
       setTimeout(() => {
-        if (!conn.open) {
+        this.errorHandlers = this.errorHandlers.filter(h => h !== peerErrorHandler)
+        settle(() => {
           conn.close()
           reject(new Error('连接超时，请确认房间号正确且房主在线'))
-        }
-      }, 30000)
+        })
+      }, 15000)
     })
   }
 
