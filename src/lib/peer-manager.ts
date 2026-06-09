@@ -53,12 +53,12 @@ export class PeerManager {
     }
     
     if (isLocal) {
-      // 本地信令服务器 (npx tsx src/peer-server.ts)
+      // 本地信令服务器 (npx peerjs --port 9000)
       peerOptions.host = 'localhost'
       peerOptions.port = 9000
-      peerOptions.path = '/'
+      peerOptions.path = '/peerjs'
       peerOptions.secure = false
-      console.log('[PeerManager] 使用本地信令服务器 ws://localhost:9000')
+      console.log('[PeerManager] 使用本地信令服务器 ws://localhost:9000/peerjs')
     } else {
       console.log('[PeerManager] 使用 PeerJS 云服务器')
     }

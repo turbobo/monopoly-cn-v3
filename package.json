@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3460",
-    "dev:all": "npx tsx peer-server.ts & next dev -p 3460",
-    "peer": "npx tsx peer-server.ts",
+    "dev:all": "npx peerjs --port 9000 --path /peerjs & next dev -p 3460",
+    "peer": "npx peerjs --port 9000 --path /peerjs",
     "build": "next build",
     "start": "next start"
   },
