@@ -141,6 +141,18 @@ export default function MonopolyGame() {
     const newState: GameState = JSON.parse(JSON.stringify(gs))
     const currentP = newState.players[newState.currentPlayer]
 
+    // 先广播骰子事件，让guest在本地播放动画
+    const peer = peerRef.current
+    if (peer) {
+      peer.broadcast({
+        type: 'dice-rolled',
+        payload: {
+          dice: [dice[0], dice[1]],
+          playerIndex: newState.currentPlayer,
+        },
+      })
+    }
+
     playDiceRoll()
     rendererRef.current?.playDiceAnimation(dice, () => {
       playDiceLand()
@@ -242,6 +254,32 @@ export default function MonopolyGame() {
             }))
             playersRef.current = players
             setOnlinePlayers(players)
+          }
+          break
+        }
+
+        case 'dice-rolled': {
+          if (!peer.getIsHost()) {
+            const { dice: diceValues, playerIndex } = message.payload
+            playDiceRoll()
+            rendererRef.current?.playDiceAnimation(diceValues, () => {
+              playDiceLand()
+              setDiceResult(diceValues[0] + diceValues[1])
+
+              const gs = gameRef.current
+              if (gs) {
+                const player = gs.players[playerIndex]
+                if (player) {
+                  const oldPos = player.position
+                  const steps = diceValues[0] + diceValues[1]
+                  rendererRef.current?.playMoveAnimation(
+                    player.id, oldPos, steps, player.color, player.avatar,
+                    () => {},
+                    () => playStepSound()
+                  )
+                }
+              }
+            })
           }
           break
         }
@@ -506,6 +544,20 @@ export default function MonopolyGame() {
     }
 
     // Local/AI mode or online host: execute locally
+    // Online host: broadcast dice event to guests for animation sync
+    if (mode === 'online' && onlineRole === 'host') {
+      const peer = peerRef.current
+      if (peer) {
+        peer.broadcast({
+          type: 'dice-rolled',
+          payload: {
+            dice: [dice[0], dice[1]],
+            playerIndex: game.currentPlayer,
+          },
+        })
+      }
+    }
+
     rendererRef.current?.playDiceAnimation(dice, () => {
       playDiceLand()
       setDiceResult(dice[0] + dice[1])

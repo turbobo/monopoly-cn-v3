@@ -2,7 +2,7 @@
 // 用于在线多人模式，无需后端服务器
 
 export interface PeerMessage {
-  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error'
+  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled'
   payload: any
   from: string
   timestamp: number
