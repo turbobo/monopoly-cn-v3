@@ -78,18 +78,8 @@ export class PeerManager {
     conn.on('open', () => {
       this.connections.set(conn.peer, conn)
       this.connectionHandlers.forEach(h => h(conn.peer))
-      
-      // 发送房间信息给新连接的玩家
-      this.sendToPeer(conn.peer, {
-        type: 'room-info',
-        payload: {
-          roomId: this.roomId,
-          hostId: this.peerId,
-          isHost: this.isHost,
-        },
-        from: this.peerId,
-        timestamp: Date.now(),
-      })
+      // 保存第一个连接的peer作为roomId（host模式）
+      if (!this.roomId) this.roomId = conn.peer
     })
 
     conn.on('data', (data: PeerMessage) => {
@@ -184,17 +174,20 @@ export class PeerManager {
     })
   }
 
-  // 事件监听
-  onMessage(handler: MessageHandler) {
+  // 事件监听（返回取消注册函数）
+  onMessage(handler: MessageHandler): () => void {
     this.messageHandlers.push(handler)
+    return () => { this.messageHandlers = this.messageHandlers.filter(h => h !== handler) }
   }
 
-  onConnection(handler: ConnectionHandler) {
+  onConnection(handler: ConnectionHandler): () => void {
     this.connectionHandlers.push(handler)
+    return () => { this.connectionHandlers = this.connectionHandlers.filter(h => h !== handler) }
   }
 
-  onDisconnection(handler: ConnectionHandler) {
+  onDisconnection(handler: ConnectionHandler): () => void {
     this.disconnectionHandlers.push(handler)
+    return () => { this.disconnectionHandlers = this.disconnectionHandlers.filter(h => h !== handler) }
   }
 
   // 获取连接的玩家数量

@@ -31,6 +31,8 @@ export default function MonopolyGame() {
   const messagesRef = useRef<string[]>([])
   const onlinePlayersRef = useRef<OnlinePlayer[]>([])
   const myNameRef = useRef('')
+  const buyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const playersRef = useRef<OnlinePlayer[]>([])
 
   // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
@@ -61,6 +63,7 @@ export default function MonopolyGame() {
   useEffect(() => { messagesRef.current = messages }, [messages])
   useEffect(() => { onlinePlayersRef.current = onlinePlayers }, [onlinePlayers])
   useEffect(() => { myNameRef.current = playerName }, [playerName])
+  useEffect(() => { playersRef.current = onlinePlayers }, [onlinePlayers])
 
   // 初始化 Canvas
   useEffect(() => {
@@ -166,19 +169,17 @@ export default function MonopolyGame() {
           // Check buy prompt for the current player on the new state
           if (newState.phase === 'action') {
             const buyer = newState.players[newState.currentPlayer]
-            // In online mode, if buyer is remote, host auto-decides after delay
-            // If buyer is local (host), show prompt
             const buyerName = buyer.name
             if (buyerName === myNameRef.current) {
+              // 本地玩家（房主自己）：显示购买提示
               const tile = BOARD[buyer.position]
               setBuyPrompt({ tile })
             } else {
-              // Remote player's buy decision - wait for their message
-              // For now, auto-skip after timeout
-              setTimeout(() => {
+              // 远程玩家：等待其购买决策，10秒超时自动跳过
+              if (buyTimeoutRef.current) clearTimeout(buyTimeoutRef.current)
+              buyTimeoutRef.current = setTimeout(() => {
                 const latestGs = gameRef.current
                 if (latestGs && latestGs.phase === 'action') {
-                  // Auto-skip
                   const skipState: GameState = JSON.parse(JSON.stringify(latestGs))
                   skipState.phase = 'roll'
                   const skipPlayer = skipState.players[skipState.currentPlayer]
@@ -188,6 +189,7 @@ export default function MonopolyGame() {
                   setGame(skipState)
                   broadcastState(skipState, skipMsgs)
                 }
+                buyTimeoutRef.current = null
               }, 10000)
             }
           }
@@ -202,36 +204,38 @@ export default function MonopolyGame() {
   }, [broadcastState])
 
   // ===== 在线模式：处理 PeerJS 消息 =====
+  const executeOnlineTurnRef = useRef(executeOnlineTurn)
+  useEffect(() => { executeOnlineTurnRef.current = executeOnlineTurn }, [executeOnlineTurn])
+
   useEffect(() => {
     const peer = peerRef.current
     if (!peer) return
 
-    peer.onMessage((message: PeerMessage, fromPeerId: string) => {
+    const messageHandler = (message: PeerMessage, fromPeerId: string) => {
       switch (message.type) {
         case 'player-join': {
-          // 房主收到玩家加入请求
           if (peer.getIsHost()) {
             const newPlayer: OnlinePlayer = {
               id: message.from,
               name: message.payload.name,
               isHost: false,
             }
-            setOnlinePlayers(prev => {
-              const updated = [...prev, newPlayer]
-              peer.broadcast({
-                type: 'room-info',
-                payload: {
-                  players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
-                }
-              })
-              return updated
+            // 立即更新ref避免竞态条件
+            const updated = [...playersRef.current, newPlayer]
+            playersRef.current = updated
+            setOnlinePlayers(updated)
+            // 广播更新后的玩家列表给所有玩家
+            peer.broadcast({
+              type: 'room-info',
+              payload: {
+                players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
+              }
             })
           }
           break
         }
 
         case 'room-info': {
-          // 客户端收到房间信息
           if (!peer.getIsHost()) {
             const players = message.payload.players.map((p: any) => ({
               id: p.id,
@@ -244,14 +248,12 @@ export default function MonopolyGame() {
         }
 
         case 'game-state': {
-          // 客户端收到游戏状态更新
           if (!peer.getIsHost()) {
             const { game: newGame, messages: newMsgs } = message.payload
             setGame(newGame)
             setMessages(newMsgs)
             if (newGame.gameOver) setScreen('end')
 
-            // Play sounds for actions that happened
             const lastMsg = newMsgs[newMsgs.length - 1] || ''
             if (lastMsg.includes('掷出')) playDiceLand()
             if (lastMsg.includes('购买')) playBuySound()
@@ -262,7 +264,6 @@ export default function MonopolyGame() {
         }
 
         case 'player-action': {
-          // 房主收到玩家操作请求
           if (peer.getIsHost()) {
             const gs = gameRef.current
             if (!gs) break
@@ -271,8 +272,13 @@ export default function MonopolyGame() {
 
             if (message.payload.type === 'roll') {
               const dice = rollDice()
-              executeOnlineTurn(dice)
+              executeOnlineTurnRef.current(dice)
             } else if (message.payload.type === 'buy') {
+              // 清除购买超时
+              if (buyTimeoutRef.current) {
+                clearTimeout(buyTimeoutRef.current)
+                buyTimeoutRef.current = null
+              }
               const newState: GameState = JSON.parse(JSON.stringify(gs))
               const player = newState.players[newState.currentPlayer]
               const tile = BOARD[player.position]
@@ -296,25 +302,32 @@ export default function MonopolyGame() {
           break
         }
       }
-    })
+    }
 
-    peer.onDisconnection((peerId: string) => {
+    const disconnectionHandler = (peerId: string) => {
       if (peer.getIsHost()) {
-        setOnlinePlayers(prev => {
-          const updated = prev.filter(p => p.id !== peerId)
-          peer.broadcast({
-            type: 'room-info',
-            payload: {
-              players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
-            }
-          })
-          return updated
+        const updated = playersRef.current.filter(p => p.id !== peerId)
+        playersRef.current = updated
+        setOnlinePlayers(updated)
+        peer.broadcast({
+          type: 'room-info',
+          payload: {
+            players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
+          }
         })
       } else {
         setConnectionError('与房主的连接已断开')
       }
-    })
-  })
+    }
+
+    const removeMessageHandler = peer.onMessage(messageHandler)
+    const removeDisconnectionHandler = peer.onDisconnection(disconnectionHandler)
+
+    return () => {
+      removeMessageHandler()
+      removeDisconnectionHandler()
+    }
+  }, [broadcastState])
 
   // ===== 创建房间 =====
   const createRoom = async () => {
@@ -370,6 +383,12 @@ export default function MonopolyGame() {
       await peer.connectToRoom(joinRoomId.trim())
       setRoomId(joinRoomId.trim())
       setOnlineRole('guest')
+      // 立即显示自己在玩家列表中
+      setOnlinePlayers([{
+        id: peer.getRoomId(),
+        name: playerName,
+        isHost: false,
+      }])
       setScreen('lobby')
     } catch (err: any) {
       setConnectionError(`加入房间失败: ${err.message || '未知错误'}`)
@@ -457,13 +476,18 @@ export default function MonopolyGame() {
 
     // Online guest: send action to host
     if (mode === 'online' && onlineRole === 'guest') {
-      peerRef.current?.sendToPeer(roomId, {
-        type: 'player-action',
-        payload: { type: 'roll', playerName },
-        from: peerRef.current?.getRoomId() || '',
-        timestamp: Date.now(),
-      })
-      setRolling(false)
+      const peer = peerRef.current
+      if (peer) {
+        peer.sendToPeer(roomId, {
+          type: 'player-action',
+          payload: { type: 'roll', playerName },
+          from: peer.getRoomId(),
+          timestamp: Date.now(),
+        })
+      }
+      // 保持rolling状态，等host广播新状态后自动更新
+      // 超时5秒后自动重置
+      setTimeout(() => setRolling(false), 5000)
       return
     }
 
@@ -503,8 +527,24 @@ export default function MonopolyGame() {
               if (updatedPlayer.name === myNameRef.current) {
                 const tile = BOARD[updatedPlayer.position]
                 setBuyPrompt({ tile })
+              } else {
+                // 远程玩家购买决策：10秒超时自动跳过
+                if (buyTimeoutRef.current) clearTimeout(buyTimeoutRef.current)
+                buyTimeoutRef.current = setTimeout(() => {
+                  const latestGs = gameRef.current
+                  if (latestGs && latestGs.phase === 'action') {
+                    const skipState: GameState = JSON.parse(JSON.stringify(latestGs))
+                    skipState.phase = 'roll'
+                    const skipPlayer = skipState.players[skipState.currentPlayer]
+                    const skipTile = BOARD[skipPlayer.position]
+                    const skipMsgs = [...messagesRef.current, `❌ ${skipPlayer.name} 放弃购买 ${skipTile.name}`]
+                    setMessages(skipMsgs)
+                    setGame(skipState)
+                    broadcastState(skipState, skipMsgs)
+                  }
+                  buyTimeoutRef.current = null
+                }, 10000)
               }
-              // If remote, wait for their action message
             } else if (!updatedPlayer.isAI) {
               const tile = BOARD[updatedPlayer.position]
               setBuyPrompt({ tile })
@@ -532,14 +572,23 @@ export default function MonopolyGame() {
   const handleBuy = useCallback((buy: boolean) => {
     if (!game || !currentPlayer) return
 
+    // 清除购买超时
+    if (buyTimeoutRef.current) {
+      clearTimeout(buyTimeoutRef.current)
+      buyTimeoutRef.current = null
+    }
+
     // Online guest: send action to host
     if (mode === 'online' && onlineRole === 'guest') {
-      peerRef.current?.sendToPeer(roomId, {
-        type: 'player-action',
-        payload: { type: 'buy', buy, playerName },
-        from: peerRef.current?.getRoomId() || '',
-        timestamp: Date.now(),
-      })
+      const peer = peerRef.current
+      if (peer) {
+        peer.sendToPeer(roomId, {
+          type: 'player-action',
+          payload: { type: 'buy', buy, playerName },
+          from: peer.getRoomId(),
+          timestamp: Date.now(),
+        })
+      }
       setBuyPrompt(null)
       return
     }
@@ -572,6 +621,7 @@ export default function MonopolyGame() {
   }, [game, currentPlayer, mode, onlineRole, roomId, playerName, broadcastState])
 
   // ===== AI 回合处理（仅本地/AI模式） =====
+  const processAITurnsRef = useRef<(gs: GameState, msgs: string[]) => void>(() => {})
   const processAITurns = useCallback((gs: GameState, msgs: string[]) => {
     if (gs.gameOver) {
       setScreen('end')
@@ -611,7 +661,7 @@ export default function MonopolyGame() {
             if (gs.gameOver) {
               setScreen('end')
             } else {
-              setTimeout(() => processAITurns(gs, allMsgs), 800)
+              setTimeout(() => processAITurnsRef.current(gs, allMsgs), 800)
             }
           },
           () => playStepSound()
@@ -619,6 +669,7 @@ export default function MonopolyGame() {
       })
     }, 600)
   }, [])
+  useEffect(() => { processAITurnsRef.current = processAITurns }, [processAITurns])
 
   // ===== 重新开始 =====
   const restartGame = () => {
@@ -632,6 +683,10 @@ export default function MonopolyGame() {
 
   // ===== 退出在线房间 =====
   const leaveRoom = () => {
+    if (buyTimeoutRef.current) {
+      clearTimeout(buyTimeoutRef.current)
+      buyTimeoutRef.current = null
+    }
     if (peerRef.current) {
       peerRef.current.destroy()
       peerRef.current = null
@@ -640,6 +695,7 @@ export default function MonopolyGame() {
     setRoomId('')
     setJoinRoomId('')
     setOnlinePlayers([])
+    playersRef.current = []
     setConnectionError('')
     setScreen('menu')
     setGame(null)
@@ -878,15 +934,33 @@ export default function MonopolyGame() {
               </div>
 
               {onlineRole === 'host' && (
-                <div className="mb-6">
-                  <label className="text-gray-400 text-sm mb-2 block">初始资金</label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {[800, 1000, 1500, 2000].map(n => (
-                      <button key={n} onClick={() => setInitialMoney(n)}
-                        className={`py-2 rounded-lg text-sm font-medium transition-all ${initialMoney === n ? 'bg-orange-500/20 border-orange-500 text-orange-300 border' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
-                        ¥{n}
-                      </button>
-                    ))}
+                <div className="mb-6 space-y-4">
+                  <div>
+                    <label className="text-gray-400 text-sm mb-2 block">初始资金</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[800, 1000, 1500, 2000, 3000, 5000, 8000, 10000].map(n => (
+                        <button key={n} onClick={() => setInitialMoney(n)}
+                          className={`py-2 rounded-lg text-xs font-medium transition-all ${initialMoney === n ? 'bg-orange-500/20 border-orange-500 text-orange-300 border' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
+                          {n >= 10000 ? `${n / 10000}万` : `¥${n}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-gray-400 text-sm mb-2 block">购买策略</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { key: 'easy' as const, label: '🌱 宽松', desc: '对手保守' },
+                        { key: 'normal' as const, label: '⚖️ 均衡', desc: '正常' },
+                        { key: 'hard' as const, label: '🔥 激烈', desc: '对手激进' },
+                      ].map(d => (
+                        <button key={d.key} onClick={() => setDifficulty(d.key)}
+                          className={`py-2 px-2 rounded-lg text-center transition-all ${difficulty === d.key ? 'bg-orange-500/20 border-orange-500 text-orange-300 border' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
+                          <div className="text-sm font-medium">{d.label}</div>
+                          <div className="text-[10px] mt-0.5 opacity-70">{d.desc}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

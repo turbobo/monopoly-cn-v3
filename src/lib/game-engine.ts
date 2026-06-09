@@ -217,7 +217,7 @@ export function checkBankrupt(player: Player): { bankrupt: boolean; soldTiles: n
     // 尝试卖地（从最便宜的开始）
     const sorted = [...player.properties].sort((a, b) => BOARD[a].price - BOARD[b].price)
     for (const tileId of sorted) {
-      player.money += Math.floor(BOARD[tileId].price * 0.6) // 6折卖
+      player.money += Math.floor(BOARD[tileId].price * 0.6)
       player.properties = player.properties.filter(id => id !== tileId)
       soldTiles.push(tileId)
       if (player.money >= 0) break
@@ -406,15 +406,17 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
       player.position = 7
       messages.push(`👮 ${player.name} 被送进监狱！`)
       break
-    case 'tax':
+    case 'tax': {
       const tax = tile.name === '个人所得税' ? 100 : 150
       player.money -= tax
       messages.push(`💸 ${player.name} 缴纳${tile.name} ¥${tax}`)
       break
-    case 'chance':
+    }
+    case 'chance': {
       const chanceMsg = drawChance(gs)
       messages.push(`❓ ${player.name} ${chanceMsg}`)
       break
+    }
     case 'property':
     case 'railroad':
     case 'utility': {

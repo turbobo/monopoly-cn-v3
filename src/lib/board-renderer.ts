@@ -1,5 +1,5 @@
 // 大富翁中国行 - Canvas棋盘渲染 (v4: 占领强化+逐格移动动画)
-import { BOARD, BOARD_SIZE, Player, Tile, totalWealth } from './game-engine'
+import { BOARD, BOARD_SIZE, Player } from './game-engine'
 
 interface Particle {
   x: number; y: number; vx: number; vy: number
@@ -584,117 +584,6 @@ export class BoardRenderer {
       }
     }
     ctx.globalAlpha = 1
-
-    ctx.restore()
-  }
-
-  // ===== 格子类型主题背景 =====
-  private drawTileTheme(pos: {x: number, y: number, w: number, h: number, side: string}, type: string, tileColor: string) {
-    const { ctx } = this
-    const cx = pos.x + pos.w / 2
-    const cy = pos.y + pos.h / 2
-    const minDim = Math.min(pos.w, pos.h)
-
-    ctx.save()
-    ctx.globalAlpha = 0.12
-
-    switch (type) {
-      case 'property':
-        // 城市：底部城市天际线剪影
-        ctx.fillStyle = tileColor || '#666'
-        const buildingCount = 4
-        const buildingWidth = pos.w / (buildingCount * 2 + 1)
-        const baseY = pos.y + pos.h * 0.75
-        for (let b = 0; b < buildingCount; b++) {
-          const bx = pos.x + buildingWidth * (b * 2 + 1)
-          const bh = minDim * (0.15 + Math.random() * 0.15)
-          ctx.fillRect(bx, baseY - bh, buildingWidth, bh)
-        }
-        // 地面线
-        ctx.fillRect(pos.x + 2, baseY, pos.w - 4, 2)
-        break
-
-      case 'railroad':
-        // 交通：铁轨纹理
-        ctx.strokeStyle = '#888'
-        ctx.lineWidth = 2
-        // 两条平行轨道
-        const trackY1 = cy - 4
-        const trackY2 = cy + 4
-        ctx.beginPath()
-        ctx.moveTo(pos.x + 4, trackY1)
-        ctx.lineTo(pos.x + pos.w - 4, trackY1)
-        ctx.moveTo(pos.x + 4, trackY2)
-        ctx.lineTo(pos.x + pos.w - 4, trackY2)
-        ctx.stroke()
-        // 枕木
-        ctx.lineWidth = 1.5
-        for (let t = pos.x + 8; t < pos.x + pos.w - 8; t += 10) {
-          ctx.beginPath()
-          ctx.moveTo(t, trackY1 - 2)
-          ctx.lineTo(t, trackY2 + 2)
-          ctx.stroke()
-        }
-        break
-
-      case 'utility':
-        // 公共事业：闪电/电路图案
-        ctx.strokeStyle = '#FFD700'
-        ctx.lineWidth = 2
-        // 闪电形状
-        ctx.beginPath()
-        ctx.moveTo(cx - 4, cy - 10)
-        ctx.lineTo(cx + 2, cy - 2)
-        ctx.lineTo(cx - 2, cy)
-        ctx.lineTo(cx + 4, cy + 10)
-        ctx.stroke()
-        // 电路节点
-        ctx.fillStyle = '#FFD700'
-        ctx.beginPath()
-        ctx.arc(cx - 4, cy - 10, 2, 0, Math.PI * 2)
-        ctx.arc(cx + 4, cy + 10, 2, 0, Math.PI * 2)
-        ctx.fill()
-        break
-
-      case 'chance':
-        // 机会：星星散布
-        ctx.fillStyle = '#fbbf24'
-        const starPositions = [
-          [cx - 12, cy - 8], [cx + 10, cy - 5],
-          [cx - 8, cy + 6], [cx + 12, cy + 8], [cx, cy - 12]
-        ]
-        for (const [sx, sy] of starPositions) {
-          ctx.beginPath()
-          ctx.arc(sx, sy, 1.5, 0, Math.PI * 2)
-          ctx.fill()
-        }
-        // 问号光晕
-        ctx.strokeStyle = '#fbbf24'
-        ctx.lineWidth = 1
-        ctx.beginPath()
-        ctx.arc(cx, cy, minDim * 0.2, 0, Math.PI * 2)
-        ctx.stroke()
-        break
-
-      case 'tax':
-        // 税务：钱币图案
-        ctx.strokeStyle = '#ef4444'
-        ctx.lineWidth = 1.5
-        // 人民币符号 ¥
-        ctx.beginPath()
-        ctx.moveTo(cx - 5, cy - 6)
-        ctx.lineTo(cx, cy)
-        ctx.lineTo(cx + 5, cy - 6)
-        ctx.moveTo(cx - 3, cy - 2)
-        ctx.lineTo(cx + 3, cy - 2)
-        ctx.moveTo(cx, cy)
-        ctx.lineTo(cx, cy + 8)
-        ctx.stroke()
-        break
-
-      default:
-        break
-    }
 
     ctx.restore()
   }
