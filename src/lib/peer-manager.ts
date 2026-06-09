@@ -43,8 +43,9 @@ export class PeerManager {
         debug: 2,
         config: {
           iceServers: [
+            { urls: 'stun:stun.qq.com' },
+            { urls: 'stun:stun.miwifi.com' },
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
           ]
         }
       })
@@ -143,9 +144,10 @@ export class PeerManager {
       // 超时处理
       setTimeout(() => {
         if (!conn.open) {
-          reject(new Error('Connection timeout'))
+          conn.close()
+          reject(new Error('连接超时，请确认房间号正确且房主在线'))
         }
-      }, 15000)
+      }, 30000)
     })
   }
 
