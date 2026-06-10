@@ -66,8 +66,11 @@ export class PeerManager {
     // 动态导入 PeerJS
     const Peer = (await import('peerjs')).default
     
-    // 本地开发时使用本地信令服务器，生产环境使用 PeerJS 云服务器
-    const isLocal = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    // 判断连接环境：localhost / 局域网IP / 公网域名
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1'
+    const isLanIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) && hostname !== '127.0.0.1'
+    const isLocal = isLocalhost || isLanIp
     
     const peerOptions: any = {
       debug: 2,
@@ -82,12 +85,14 @@ export class PeerManager {
     }
     
     if (isLocal) {
-      // 本地信令服务器 (npm run peer 或 npm run dev:all)
-      peerOptions.host = 'localhost'
+      // 本地/局域网信令服务器 (npm run peer 或 npm run dev:all)
+      // 局域网访问时自动使用房主设备的局域网 IP
+      const signalingHost = isLocalhost ? 'localhost' : hostname
+      peerOptions.host = signalingHost
       peerOptions.port = 9000
       peerOptions.path = '/peerjs'
       peerOptions.secure = false
-      console.log('[PeerManager] 使用本地信令服务器 ws://localhost:9000/peerjs')
+      console.log(`[PeerManager] 使用${isLanIp ? '局域网' : '本地'}信令服务器 ws://${signalingHost}:9000/peerjs`)
     } else {
       // 生产环境：使用 Cloudflare Worker 信令服务器
       peerOptions.host = PROD_PEER_HOST

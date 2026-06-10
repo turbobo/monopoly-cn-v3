@@ -3,9 +3,9 @@
   "version": "3.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3460",
-    "dev:all": "npx peerjs --port 9000 --path /peerjs & next dev -p 3460",
-    "peer": "npx peerjs --port 9000 --path /peerjs",
+    "dev": "next dev -H 0.0.0.0 -p 3460",
+    "dev:all": "npx peerjs --host 0.0.0.0 --port 9000 --path /peerjs & next dev -H 0.0.0.0 -p 3460",
+    "peer": "npx peerjs --host 0.0.0.0 --port 9000 --path /peerjs",
     "build": "next build",
     "start": "next start"
   },
