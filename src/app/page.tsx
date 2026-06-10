@@ -177,6 +177,7 @@ export default function MonopolyGame() {
         payload: {
           dice: [dice[0], dice[1]],
           playerIndex: gs.currentPlayer,
+          fromTile: oldPos,
           game: newState,
           messages: newMsgs,
         },
@@ -289,7 +290,7 @@ export default function MonopolyGame() {
 
         case 'dice-rolled': {
           if (!peer.getIsHost()) {
-            const { dice: diceValues, playerIndex, game: newGame, messages: newMsgs } = message.payload
+            const { dice: diceValues, playerIndex, fromTile, game: newGame, messages: newMsgs } = message.payload
             animatingRef.current = true
             playDiceRoll()
             rendererRef.current?.playDiceAnimation(diceValues, () => {
@@ -300,7 +301,8 @@ export default function MonopolyGame() {
               if (gs) {
                 const player = gs.players[playerIndex]
                 if (player) {
-                  const oldPos = player.position
+                  // 使用 payload 中的 fromTile（移动前的位置），而非 game-state 中已更新的位置
+                  const oldPos = fromTile ?? player.position
                   const steps = diceValues[0] + diceValues[1]
                   rendererRef.current?.playMoveAnimation(
                     player.id, oldPos, steps, player.color, player.avatar,
@@ -741,6 +743,7 @@ export default function MonopolyGame() {
           payload: {
             dice: [dice[0], dice[1]],
             playerIndex: game.currentPlayer,
+            fromTile: currentPlayer.position,
             game: precomputedState,
             messages: precomputedMsgs,
           },
@@ -1113,6 +1116,9 @@ export default function MonopolyGame() {
                 <div className="mb-8 space-y-3">
                   <div className="text-sm text-gray-400">
                     在线模式使用 GoEasy 实时通信，房主创建房间后分享房间号给朋友。
+                  </div>
+                  <div className="text-xs text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 text-center">
+                    在线对战最多支持 4 名玩家
                   </div>
                   <button onClick={createRoom}
                     disabled={connecting || !playerName.trim()}
