@@ -53,7 +53,7 @@ export class BoardRenderer {
   // 逐格移动动画
   private moveAnim: MoveAnim = {
     active: false, playerId: -1, fromTile: 0, currentTile: 0, targetTile: 0,
-    stepsLeft: 0, progress: 0, speed: 0.03, color: '', avatar: '', onComplete: null, onStep: null,
+    stepsLeft: 0, progress: 0, speed: 0.039, color: '', avatar: '', onComplete: null, onStep: null,
   }
 
   constructor(canvas: HTMLCanvasElement) {
@@ -97,7 +97,7 @@ export class BoardRenderer {
     this.moveAnim = {
       active: true, playerId, fromTile, currentTile: fromTile,
       targetTile: (fromTile + steps) % BOARD_SIZE, stepsLeft: steps,
-      progress: 0, speed: 0.03, color, avatar,
+      progress: 0, speed: 0.039, color, avatar,
       onComplete, onStep: onStep || null,
     }
   }
@@ -176,11 +176,11 @@ export class BoardRenderer {
   // ===== 浮动文字 =====
   showFloatingText(tileIndex: number, text: string, color: string) {
     const pos = this.getTilePosition(tileIndex)
-    this.floatingTexts.push({ text, x: pos.x + pos.w / 2, y: pos.y - 10, color, life: 0, maxLife: 90, fontSize: 20 })
+    this.floatingTexts.push({ text, x: pos.x + pos.w / 2, y: pos.y - 10, color, life: 0, maxLife: 117, fontSize: 20 })
   }
 
   showCenterFloat(text: string, color: string) {
-    this.floatingTexts.push({ text, x: this.size / 2, y: this.size / 2 + 120, color, life: 0, maxLife: 80, fontSize: 24 })
+    this.floatingTexts.push({ text, x: this.size / 2, y: this.size / 2 + 120, color, life: 0, maxLife: 104, fontSize: 24 })
   }
 
   // ===== 骰子动画 =====

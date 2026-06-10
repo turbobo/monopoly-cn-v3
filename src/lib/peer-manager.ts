@@ -2,10 +2,13 @@
 // 用于在线多人模式
 
 // ===== 生产环境信令服务器配置 =====
-// 部署到 Render 后，将下面的域名替换为你的 Render 服务地址
-const PROD_PEER_HOST = '0.peerjs.com'   // 例如: 'monopoly-peerjs.onrender.com'
+// Cloudflare Worker + Durable Objects 信令服务器
+// 部署后将域名替换为你的 Worker 地址，如:
+//   'peerjs-signaling.your-account.workers.dev'
+//   或自定义域名 'peerjs.playai.cloud-ip.cc'
+const PROD_PEER_HOST = 'peerjs-signaling.YOUR_CLOUDFLARE_ACCOUNT.workers.dev'
 const PROD_PEER_PORT = 443
-const PROD_PEER_PATH = '/'               // 例如: '/peerjs'
+const PROD_PEER_PATH = '/peerjs'
 const PROD_PEER_SECURE = true
 
 export interface PeerMessage {
@@ -86,12 +89,12 @@ export class PeerManager {
       peerOptions.secure = false
       console.log('[PeerManager] 使用本地信令服务器 ws://localhost:9000/peerjs')
     } else {
-      // 生产环境：使用自行部署的信令服务器（Render）
+      // 生产环境：使用 Cloudflare Worker 信令服务器
       peerOptions.host = PROD_PEER_HOST
       peerOptions.port = PROD_PEER_PORT
       peerOptions.path = PROD_PEER_PATH
       peerOptions.secure = PROD_PEER_SECURE
-      console.log(`[PeerManager] 使用信令服务器 ${PROD_PEER_HOST}`)
+      console.log(`[PeerManager] 使用 Cloudflare Worker 信令服务器 ${PROD_PEER_HOST}`)
     }
     
     return new Promise((resolve, reject) => {
