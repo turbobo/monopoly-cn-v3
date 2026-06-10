@@ -8,7 +8,7 @@ import {
   rollDice, finalizeTurn,
 } from '@/lib/game-engine'
 import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, setMuted } from '@/lib/sound'
-import { PeerManager, PeerMessage } from '@/lib/peer-manager'
+import { GoEasyManager, PeerMessage } from '@/lib/goeasy-manager'
 
 type Screen = 'menu' | 'setup' | 'lobby' | 'game' | 'end'
 type GameMode = 'ai' | 'local' | 'online'
@@ -23,7 +23,7 @@ interface OnlinePlayer {
 export default function MonopolyGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<BoardRenderer | null>(null)
-  const peerRef = useRef<PeerManager | null>(null)
+  const peerRef = useRef<GoEasyManager | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
   // Keep refs for latest state (avoids stale closures in callbacks)
@@ -35,6 +35,7 @@ export default function MonopolyGame() {
   const playersRef = useRef<OnlinePlayer[]>([])
   const screenRef = useRef<Screen>('menu')
   const animatingRef = useRef(false)
+  const roomValidatedRef = useRef(false)
   // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
   const [mode, setMode] = useState<GameMode>('local')
@@ -68,7 +69,7 @@ export default function MonopolyGame() {
   useEffect(() => { playersRef.current = onlinePlayers }, [onlinePlayers])
   useEffect(() => { screenRef.current = screen }, [screen])
 
-  // 页面卸载时清理 PeerManager，防止僵尸连接
+  // 页面卸载时清理 LCManager，防止僵尸连接
   useEffect(() => {
     const cleanup = () => {
       if (peerRef.current) {
@@ -108,7 +109,7 @@ export default function MonopolyGame() {
     }
   }, [])
 
-  // 清理 PeerJS 连接
+  // 清理 LeanCloud 连接
   useEffect(() => {
     return () => {
       if (peerRef.current) {
@@ -163,15 +164,21 @@ export default function MonopolyGame() {
     if (!gs) return
     const newState: GameState = JSON.parse(JSON.stringify(gs))
     const currentP = newState.players[newState.currentPlayer]
+    const oldPos = currentP.position
+    const steps = dice[0] + dice[1]
 
-    // 先广播骰子事件，让guest在本地播放动画
+    const turnMessages = executeTurn(newState, dice)
+    const newMsgs = [...messagesRef.current, ...turnMessages]
+
     const peer = peerRef.current
     if (peer) {
       peer.broadcast({
         type: 'dice-rolled',
         payload: {
           dice: [dice[0], dice[1]],
-          playerIndex: newState.currentPlayer,
+          playerIndex: gs.currentPlayer,
+          game: newState,
+          messages: newMsgs,
         },
       })
     }
@@ -181,36 +188,25 @@ export default function MonopolyGame() {
       playDiceLand()
       setDiceResult(dice[0] + dice[1])
 
-      const oldPos = currentP.position
-      const steps = dice[0] + dice[1]
-
       rendererRef.current?.playMoveAnimation(
         currentP.id, oldPos, steps, currentP.color, currentP.avatar,
         () => {
-          const turnMessages = executeTurn(newState, dice)
           for (const msg of turnMessages) {
             if (msg.includes('购买')) playBuySound()
             else if (msg.includes('支付') || msg.includes('缴纳')) playPaySound()
             else if (msg.includes('破产')) playBankruptSound()
           }
 
-          const newMsgs = [...messagesRef.current, ...turnMessages]
           setMessages(newMsgs)
           setGame(newState)
 
-          // Broadcast to all peers
-          broadcastState(newState, newMsgs)
-
-          // Check buy prompt for the current player on the new state
           if (newState.phase === 'action') {
             const buyer = newState.players[newState.currentPlayer]
             const buyerName = buyer.name
             if (buyerName === myNameRef.current) {
-              // 本地玩家（房主自己）：显示购买提示
               const tile = BOARD[buyer.position]
               setBuyPrompt({ tile })
             } else {
-              // 远程玩家：等待其购买决策，10秒超时自动跳过
               if (buyTimeoutRef.current) clearTimeout(buyTimeoutRef.current)
               buyTimeoutRef.current = setTimeout(() => {
                 const latestGs = gameRef.current
@@ -240,12 +236,12 @@ export default function MonopolyGame() {
     })
   }, [broadcastState])
 
-  // ===== 在线模式：处理 PeerJS 消息 =====
+  // ===== 在线模式：处理消息 =====
   const executeOnlineTurnRef = useRef(executeOnlineTurn)
   useEffect(() => { executeOnlineTurnRef.current = executeOnlineTurn }, [executeOnlineTurn])
 
-  // ===== 注册 PeerJS 消息处理 =====
-  const setupPeerHandlers = useCallback((peer: PeerManager) => {
+  // ===== 注册 LeanCloud 消息处理 =====
+  const setupPeerHandlers = useCallback((peer: GoEasyManager) => {
     const messageHandler = (message: PeerMessage, fromPeerId: string) => {
       switch (message.type) {
         case 'player-join': {
@@ -262,10 +258,10 @@ export default function MonopolyGame() {
               name: joinName,
               isHost: false,
             }
+            peer.trackPeer(message.from)
             const updated = [...playersRef.current, newPlayer]
             playersRef.current = updated
             setOnlinePlayers(updated)
-            // 广播更新后的玩家列表给所有玩家
             peer.broadcast({
               type: 'room-info',
               payload: {
@@ -278,6 +274,8 @@ export default function MonopolyGame() {
 
         case 'room-info': {
           if (!peer.getIsHost()) {
+            roomValidatedRef.current = true
+            peer.trackPeer(fromPeerId)
             const players = message.payload.players.map((p: any) => ({
               id: p.id,
               name: p.name,
@@ -291,7 +289,7 @@ export default function MonopolyGame() {
 
         case 'dice-rolled': {
           if (!peer.getIsHost()) {
-            const { dice: diceValues, playerIndex } = message.payload
+            const { dice: diceValues, playerIndex, game: newGame, messages: newMsgs } = message.payload
             animatingRef.current = true
             playDiceRoll()
             rendererRef.current?.playDiceAnimation(diceValues, () => {
@@ -306,7 +304,27 @@ export default function MonopolyGame() {
                   const steps = diceValues[0] + diceValues[1]
                   rendererRef.current?.playMoveAnimation(
                     player.id, oldPos, steps, player.color, player.avatar,
-                    () => { animatingRef.current = false },
+                    () => {
+                      animatingRef.current = false
+                      if (newGame) {
+                        setGame(newGame)
+                        setMessages(newMsgs || [])
+                        setRolling(false)
+                        if (newGame.gameOver) setScreen('end')
+                        if (newGame.phase === 'action') {
+                          const buyer = newGame.players[newGame.currentPlayer]
+                          if (buyer && buyer.name === myNameRef.current) {
+                            setBuyPrompt({ tile: BOARD[buyer.position] })
+                          }
+                        } else {
+                          setBuyPrompt(null)
+                        }
+                        const lastMsg = (newMsgs || [])[newMsgs.length - 1] || ''
+                        if (lastMsg.includes('购买')) playBuySound()
+                        if (lastMsg.includes('支付') || lastMsg.includes('缴纳')) playPaySound()
+                        if (lastMsg.includes('破产')) playBankruptSound()
+                      }
+                    },
                     () => playStepSound()
                   )
                 } else { animatingRef.current = false }
@@ -319,19 +337,9 @@ export default function MonopolyGame() {
         case 'game-state': {
           if (!peer.getIsHost()) {
             const { game: newGame, messages: newMsgs } = message.payload
-            if (animatingRef.current) {
-              gameRef.current = newGame
-              messagesRef.current = newMsgs
-              setTimeout(() => {
-                setGame(newGame)
-                setMessages(newMsgs)
-                setRolling(false)
-              }, 800)
-            } else {
-              setGame(newGame)
-              setMessages(newMsgs)
-              setRolling(false)
-            }
+            setGame(newGame)
+            setMessages(newMsgs)
+            setRolling(false)
             // 收到游戏状态时自动进入游戏画面
             if (newGame && screenRef.current !== 'game' && screenRef.current !== 'end') {
               setScreen('game')
@@ -409,11 +417,34 @@ export default function MonopolyGame() {
           }
           break
         }
+
+        case 'player-leave': {
+          if (peer.getIsHost()) {
+            peer.untrackPeer(fromPeerId)
+            const updated = playersRef.current.filter(p => p.id !== fromPeerId)
+            playersRef.current = updated
+            setOnlinePlayers(updated)
+            peer.broadcast({
+              type: 'room-info',
+              payload: {
+                players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
+              }
+            })
+          } else {
+            const leaver = message.payload.name
+            const isHostLeaving = playersRef.current.find(p => p.name === leaver)?.isHost
+            if (isHostLeaving) {
+              setConnectionError('房主已离开房间')
+            }
+          }
+          break
+        }
       }
     }
 
     const disconnectionHandler = (peerId: string) => {
       if (peer.getIsHost()) {
+        peer.untrackPeer(peerId)
         const updated = playersRef.current.filter(p => p.id !== peerId)
         playersRef.current = updated
         setOnlinePlayers(updated)
@@ -448,23 +479,24 @@ export default function MonopolyGame() {
         peerRef.current = null
       }
 
-      const peer = new PeerManager()
+      const peer = new GoEasyManager()
       await peer.initialize(playerName)
       peerRef.current = peer
       peer.setIsHost(true)
       setupPeerHandlers(peer)
 
-      const id = peer.getRoomId()
+      // 创建 GoEasy 频道作为房间
+      const id = await peer.createRoom()
       setRoomId(id)
       setOnlineRole('host')
       setOnlinePlayers([{
-        id: id,
+        id: peer.getClientId(),
         name: playerName,
         isHost: true,
       }])
       setScreen('lobby')
     } catch (err: any) {
-      setConnectionError(`创建房间失败: ${err.message || '未知错误'}`)
+      setConnectionError(`创建房间失败: ${err.message || JSON.stringify(err)}`)
     } finally {
       setConnecting(false)
     }
@@ -491,22 +523,33 @@ export default function MonopolyGame() {
         peerRef.current = null
       }
 
-      const peer = new PeerManager()
+      const peer = new GoEasyManager()
       await peer.initialize(playerName)
       peerRef.current = peer
       peer.setIsHost(false)
       setupPeerHandlers(peer)
 
+      roomValidatedRef.current = false
       await peer.connectToRoom(joinRoomId.trim())
       setRoomId(joinRoomId.trim())
       setOnlineRole('guest')
-      // 立即显示自己在玩家列表中
       setOnlinePlayers([{
-        id: peer.getRoomId(),
+        id: peer.getClientId(),
         name: playerName,
         isHost: false,
       }])
       setScreen('lobby')
+
+      setTimeout(() => {
+        if (!roomValidatedRef.current && screenRef.current === 'lobby') {
+          setConnectionError('房间不存在或房主已离线')
+          peer.destroy()
+          peerRef.current = null
+          setScreen('setup')
+          setOnlineRole(null)
+          setOnlinePlayers([])
+        }
+      }, 8000)
     } catch (err: any) {
       setConnectionError(`加入房间失败: ${err.message || '未知错误'}`)
     } finally {
@@ -598,7 +641,7 @@ export default function MonopolyGame() {
         peer.sendToPeer(roomId, {
           type: 'player-action',
           payload: { type: 'roll', playerName },
-          from: peer.getRoomId(),
+          from: peer.getClientId(),
           timestamp: Date.now(),
         })
       }
@@ -612,8 +655,17 @@ export default function MonopolyGame() {
     const dice = rollDice()
     playDiceRoll()
 
-    // Online host: broadcast dice event to guests for animation sync
+    const oldPos = currentPlayer.position
+    const steps = dice[0] + dice[1]
+
+    // Online host: compute results immediately and broadcast with dice event
+    let precomputedState: GameState | null = null
+    let precomputedMsgs: string[] | null = null
+    let precomputedTurnMsgs: string[] | null = null
     if (mode === 'online' && onlineRole === 'host') {
+      precomputedState = JSON.parse(JSON.stringify(game))
+      precomputedTurnMsgs = executeTurn(precomputedState!, dice)
+      precomputedMsgs = [...messagesRef.current, ...precomputedTurnMsgs]
       const peer = peerRef.current
       if (peer) {
         peer.broadcast({
@@ -621,6 +673,8 @@ export default function MonopolyGame() {
           payload: {
             dice: [dice[0], dice[1]],
             playerIndex: game.currentPlayer,
+            game: precomputedState,
+            messages: precomputedMsgs,
           },
         })
       }
@@ -630,14 +684,19 @@ export default function MonopolyGame() {
       playDiceLand()
       setDiceResult(dice[0] + dice[1])
 
-      const oldPos = currentPlayer.position
-      const steps = dice[0] + dice[1]
-
       rendererRef.current?.playMoveAnimation(
         currentPlayer.id, oldPos, steps, currentPlayer.color, currentPlayer.avatar,
         () => {
-          const newState: GameState = JSON.parse(JSON.stringify(game))
-          const turnMessages = executeTurn(newState, dice)
+          const newState = precomputedState || (() => {
+            const s: GameState = JSON.parse(JSON.stringify(game))
+            executeTurn(s, dice)
+            return s
+          })()
+          const turnMessages = precomputedTurnMsgs || (() => {
+            const s: GameState = JSON.parse(JSON.stringify(game))
+            return executeTurn(s, dice)
+          })()
+          const newMsgs = precomputedMsgs || [...messagesRef.current, ...turnMessages]
 
           for (const msg of turnMessages) {
             if (msg.includes('购买')) playBuySound()
@@ -645,24 +704,16 @@ export default function MonopolyGame() {
             else if (msg.includes('破产')) playBankruptSound()
           }
 
-          const newMsgs = [...messagesRef.current, ...turnMessages]
           setMessages(newMsgs)
           setGame(newState)
 
-          // Online host: broadcast state
-          if (mode === 'online' && onlineRole === 'host') {
-            broadcastState(newState, newMsgs)
-          }
-
           const updatedPlayer = newState.players[newState.currentPlayer]
           if (newState.phase === 'action') {
-            // Check if it's an AI or online remote player
             if (mode === 'online') {
               if (updatedPlayer.name === myNameRef.current) {
                 const tile = BOARD[updatedPlayer.position]
                 setBuyPrompt({ tile })
               } else {
-                // 远程玩家购买决策：10秒超时自动跳过
                 if (buyTimeoutRef.current) clearTimeout(buyTimeoutRef.current)
                 buyTimeoutRef.current = setTimeout(() => {
                   const latestGs = gameRef.current
@@ -685,7 +736,6 @@ export default function MonopolyGame() {
               const tile = BOARD[updatedPlayer.position]
               setBuyPrompt({ tile })
             } else {
-              // AI auto-decide
               setTimeout(() => processAITurns(newState, turnMessages), 600)
             }
           } else {
@@ -721,7 +771,7 @@ export default function MonopolyGame() {
         peer.sendToPeer(roomId, {
           type: 'player-action',
           payload: { type: 'buy', buy, playerName },
-          from: peer.getRoomId(),
+          from: peer.getClientId(),
           timestamp: Date.now(),
         })
       }
@@ -833,6 +883,10 @@ export default function MonopolyGame() {
       buyTimeoutRef.current = null
     }
     if (peerRef.current) {
+      peerRef.current.broadcast({
+        type: 'player-leave',
+        payload: { name: myNameRef.current },
+      })
       peerRef.current.destroy()
       peerRef.current = null
     }
@@ -990,7 +1044,7 @@ export default function MonopolyGame() {
               {mode === 'online' && (
                 <div className="mb-8 space-y-3">
                   <div className="text-sm text-gray-400">
-                    在线模式使用 P2P 直连，无需服务器。房主创建房间后分享房间号给朋友。
+                    在线模式使用 GoEasy 实时通信，房主创建房间后分享房间号给朋友。
                   </div>
                   <button onClick={createRoom}
                     disabled={connecting || !playerName.trim()}
