@@ -155,7 +155,7 @@ export default function MonopolyGame() {
     }
     const myIdx = game.players.findIndex(p => p.name === myNameRef.current)
     setIsMyTurn(myIdx === game.currentPlayer)
-  }, [game, mode])
+  }, [game, mode, playerName])
 
   // ===== 在线模式：广播游戏状态 =====
   const broadcastState = useCallback((gs: GameState, msgs: string[]) => {
@@ -293,6 +293,10 @@ export default function MonopolyGame() {
             }))
             playersRef.current = players
             setOnlinePlayers(players)
+            const myEntry = players.find((p: OnlinePlayer) => p.id === peer.getClientId())
+            if (myEntry && myEntry.name !== myNameRef.current) {
+              setPlayerName(myEntry.name)
+            }
           }
           break
         }
