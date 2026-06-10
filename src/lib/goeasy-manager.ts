@@ -78,6 +78,9 @@ export class GoEasyManager {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null
   private peerLastSeen: Map<string, number> = new Map()
   private heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
+  private connectionCheckInterval: ReturnType<typeof setInterval> | null = null
+  private reconnecting: boolean = false
+  private publishQueue: string[] = []
   private static sdkInitialized: boolean = false
 
   constructor() {}
@@ -252,16 +255,84 @@ export class GoEasyManager {
     }
   }
 
-  // 发布消息到频道
+  // 发布消息到频道（含失败重试）
   private publishMessage(message: PeerMessage) {
     if (!this.goeasy || !this.channel) return
+    const content = JSON.stringify(message)
     this.goeasy.pubsub.publish({
       channel: this.channel,
-      message: JSON.stringify(message),
+      message: content,
       onFailed: (err: any) => {
-        console.error('[GoEasyManager] Publish failed:', err)
+        const errStr = JSON.stringify(err) || String(err)
+        console.error('[GoEasyManager] Publish failed:', errStr, 'type:', message.type)
+        // 非心跳消息加入重试队列
+        if (message.type !== 'ping' && message.type !== 'pong') {
+          this.publishQueue.push(content)
+          if (this.publishQueue.length > 50) this.publishQueue.shift() // 最多缓存50条
+        }
+        this.tryReconnect()
       },
     })
+  }
+
+  // 自动重连
+  private tryReconnect() {
+    if (this.destroyed || this.reconnecting || !this.goeasy) return
+    this.reconnecting = true
+    console.log('[GoEasyManager] Attempting reconnect...')
+
+    // 重连：disconnect → connect → re-subscribe
+    try { this.goeasy.disconnect({ onFailed: () => {} }) } catch {}
+    this.connected = false
+
+    const doReconnect = () => {
+      if (this.destroyed || !this.goeasy) { this.reconnecting = false; return }
+      this.goeasy!.connect({
+        id: this.clientId,
+        data: { name: this.playerName },
+        onSuccess: () => {
+          console.log('[GoEasyManager] Reconnected')
+          this.connected = true
+          // 重新订阅频道
+          if (this.channel) {
+            this.goeasy!.pubsub.subscribe({
+              channel: this.channel,
+              onMessage: (msg: { content: string }) => {
+                this.handleIncomingMessage(msg.content)
+              },
+              onSuccess: () => {
+                console.log('[GoEasyManager] Re-subscribed to', this.channel)
+                // 重发队列中的消息
+                const queue = this.publishQueue.splice(0)
+                for (const msg of queue) {
+                  this.goeasy!.pubsub.publish({
+                    channel: this.channel,
+                    message: msg,
+                    onFailed: () => {},
+                  })
+                }
+                this.reconnecting = false
+              },
+              onFailed: () => {
+                console.error('[GoEasyManager] Re-subscribe failed')
+                this.reconnecting = false
+              },
+            })
+          } else {
+            this.reconnecting = false
+          }
+        },
+        onFailed: (err: any) => {
+          console.error('[GoEasyManager] Reconnect failed:', JSON.stringify(err))
+          this.reconnecting = false
+          // 5秒后再试一次
+          setTimeout(() => { if (!this.destroyed) this.tryReconnect() }, 5000)
+        },
+      })
+    }
+
+    // 等500ms再重连
+    setTimeout(doReconnect, 500)
   }
 
   // 发送消息给特定玩家（GoEasy 中 = publish 到频道，对方过滤）
@@ -354,6 +425,18 @@ export class GoEasyManager {
         }
       })
     }, 20000)
+
+    // 连接状态监控：每30秒检查一次，断连时自动重连
+    this.connectionCheckInterval = setInterval(() => {
+      if (this.destroyed || this.reconnecting) return
+      try {
+        const status = this.goeasy?.getConnectionStatus()
+        if (status && status !== 'connected' && status !== 'Connecting') {
+          console.warn('[GoEasyManager] Connection status:', status, '- reconnecting')
+          this.tryReconnect()
+        }
+      } catch {}
+    }, 30000)
   }
 
   private stopHeartbeat() {
@@ -364,6 +447,10 @@ export class GoEasyManager {
     if (this.heartbeatCheckInterval) {
       clearInterval(this.heartbeatCheckInterval)
       this.heartbeatCheckInterval = null
+    }
+    if (this.connectionCheckInterval) {
+      clearInterval(this.connectionCheckInterval)
+      this.connectionCheckInterval = null
     }
   }
 

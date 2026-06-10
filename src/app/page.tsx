@@ -421,6 +421,7 @@ export default function MonopolyGame() {
         case 'player-leave': {
           if (peer.getIsHost()) {
             peer.untrackPeer(fromPeerId)
+            const leaverInfo = playersRef.current.find(p => p.id === fromPeerId)
             const updated = playersRef.current.filter(p => p.id !== fromPeerId)
             playersRef.current = updated
             setOnlinePlayers(updated)
@@ -430,6 +431,10 @@ export default function MonopolyGame() {
                 players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
               }
             })
+            // 如果游戏进行中，处理断线玩家的游戏状态
+            if (leaverInfo) {
+              handlePlayerDisconnect(leaverInfo.name, peer)
+            }
           } else {
             const leaver = message.payload.name
             const isHostLeaving = playersRef.current.find(p => p.name === leaver)?.isHost
@@ -442,9 +447,68 @@ export default function MonopolyGame() {
       }
     }
 
+    // 处理玩家断线：标记破产 + 跳过回合 + 广播状态
+    const handlePlayerDisconnect = (playerName: string, peer: GoEasyManager) => {
+      const gs = gameRef.current
+      if (!gs || gs.gameOver) return
+
+      const playerIdx = gs.players.findIndex(p => p.name === playerName)
+      if (playerIdx === -1) return
+      if (gs.players[playerIdx].bankrupt) return // 已破产，无需处理
+
+      const newState: GameState = JSON.parse(JSON.stringify(gs))
+      const player = newState.players[playerIdx]
+      player.bankrupt = true
+      // 变卖所有地皮
+      for (const tileId of player.properties) {
+        player.money += Math.floor(BOARD[tileId].price * 0.6)
+      }
+      player.properties = []
+
+      const newMsgs = [...messagesRef.current]
+      newMsgs.push(`💀 ${playerName} 断开连接，自动破产退出`)
+
+      // 如果断线的是当前玩家，跳过其回合
+      if (newState.currentPlayer === playerIdx) {
+        // 推进到下一个玩家
+        let next = (newState.currentPlayer + 1) % newState.players.length
+        let safety = 0
+        while (newState.players[next].bankrupt && safety < newState.players.length) {
+          next = (next + 1) % newState.players.length
+          safety++
+        }
+        if (next <= newState.currentPlayer) newState.round++
+        newState.currentPlayer = next
+        newState.phase = 'roll'
+      }
+
+      // 检查游戏是否结束
+      const activePlayers = newState.players.filter(p => !p.bankrupt)
+      if (activePlayers.length <= 1) {
+        newState.gameOver = true
+        newState.winner = activePlayers[0]?.id ?? null
+        newMsgs.push(`🎉 游戏结束！${activePlayers[0]?.name} 获胜！`)
+      }
+
+      // 回合上限检查
+      if (newState.round > newState.maxRounds && !newState.gameOver) {
+        newState.gameOver = true
+        const richest = [...newState.players].filter(p => !p.bankrupt).sort((a, b) => totalWealth(b) - totalWealth(a))
+        newState.winner = richest[0]?.id ?? null
+        newMsgs.push(`⏰ ${newState.maxRounds}回合结束！${richest[0]?.name} 以总资产最高获胜！`)
+      }
+
+      setMessages(newMsgs)
+      setGame(newState)
+      broadcastState(newState, newMsgs)
+
+      if (newState.gameOver) setScreen('end')
+    }
+
     const disconnectionHandler = (peerId: string) => {
       if (peer.getIsHost()) {
         peer.untrackPeer(peerId)
+        const leaverInfo = playersRef.current.find(p => p.id === peerId)
         const updated = playersRef.current.filter(p => p.id !== peerId)
         playersRef.current = updated
         setOnlinePlayers(updated)
@@ -454,6 +518,10 @@ export default function MonopolyGame() {
             players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
           }
         })
+        // 如果游戏进行中，处理断线玩家的游戏状态
+        if (leaverInfo) {
+          handlePlayerDisconnect(leaverInfo.name, peer)
+        }
       } else {
         setConnectionError('与房主的连接已断开')
       }
