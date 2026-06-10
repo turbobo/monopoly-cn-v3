@@ -256,6 +256,13 @@ export default function MonopolyGame() {
       switch (message.type) {
         case 'player-join': {
           if (peer.getIsHost()) {
+            if (playersRef.current.length >= 4) {
+              peer.broadcast({
+                type: 'error',
+                payload: { message: '房间已满（最多4人）', target: message.from },
+              })
+              break
+            }
             let joinName: string = message.payload.name
             const existingNames = playersRef.current.map(p => p.name)
             if (existingNames.includes(joinName)) {
@@ -295,8 +302,21 @@ export default function MonopolyGame() {
             setOnlinePlayers(players)
             const myEntry = players.find((p: OnlinePlayer) => p.id === peer.getClientId())
             if (myEntry && myEntry.name !== myNameRef.current) {
+              setConnectionError(`名称已被占用，已自动改为「${myEntry.name}」`)
               setPlayerName(myEntry.name)
             }
+          }
+          break
+        }
+
+        case 'error': {
+          if (!peer.getIsHost() && message.payload.target === peer.getClientId()) {
+            setConnectionError(message.payload.message)
+            peer.destroy()
+            peerRef.current = null
+            setScreen('setup')
+            setOnlineRole(null)
+            setOnlinePlayers([])
           }
           break
         }
