@@ -5,7 +5,7 @@ import { BoardRenderer } from '@/lib/board-renderer'
 import {
   GameState, BOARD, BOARD_SIZE, Player,
   createGame, executeTurn, buyProperty, totalWealth,
-  rollDice,
+  rollDice, finalizeTurn,
 } from '@/lib/game-engine'
 import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, setMuted } from '@/lib/sound'
 import { PeerManager, PeerMessage } from '@/lib/peer-manager'
@@ -34,6 +34,7 @@ export default function MonopolyGame() {
   const buyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const playersRef = useRef<OnlinePlayer[]>([])
   const screenRef = useRef<Screen>('menu')
+  const animatingRef = useRef(false)
   // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
   const [mode, setMode] = useState<GameMode>('local')
@@ -66,6 +67,21 @@ export default function MonopolyGame() {
   useEffect(() => { myNameRef.current = playerName }, [playerName])
   useEffect(() => { playersRef.current = onlinePlayers }, [onlinePlayers])
   useEffect(() => { screenRef.current = screen }, [screen])
+
+  // 页面卸载时清理 PeerManager，防止僵尸连接
+  useEffect(() => {
+    const cleanup = () => {
+      if (peerRef.current) {
+        peerRef.current.destroy()
+        peerRef.current = null
+      }
+    }
+    window.addEventListener('beforeunload', cleanup)
+    return () => {
+      window.removeEventListener('beforeunload', cleanup)
+      cleanup()
+    }
+  }, [])
 
   // 初始化 Canvas
   useEffect(() => {
@@ -195,13 +211,15 @@ export default function MonopolyGame() {
                 const latestGs = gameRef.current
                 if (latestGs && latestGs.phase === 'action') {
                   const skipState: GameState = JSON.parse(JSON.stringify(latestGs))
-                  skipState.phase = 'roll'
                   const skipPlayer = skipState.players[skipState.currentPlayer]
                   const skipTile = BOARD[skipPlayer.position]
                   const skipMsgs = [...messagesRef.current, `❌ ${skipPlayer.name} 放弃购买 ${skipTile.name}`]
+                  const finalMsgs = finalizeTurn(skipState)
+                  skipMsgs.push(...finalMsgs)
                   setMessages(skipMsgs)
                   setGame(skipState)
                   broadcastState(skipState, skipMsgs)
+                  if (skipState.gameOver) setScreen('end')
                 }
                 buyTimeoutRef.current = null
               }, 10000)
@@ -227,12 +245,18 @@ export default function MonopolyGame() {
       switch (message.type) {
         case 'player-join': {
           if (peer.getIsHost()) {
+            let joinName: string = message.payload.name
+            const existingNames = playersRef.current.map(p => p.name)
+            if (existingNames.includes(joinName)) {
+              let suffix = 2
+              while (existingNames.includes(`${joinName}(${suffix})`)) suffix++
+              joinName = `${joinName}(${suffix})`
+            }
             const newPlayer: OnlinePlayer = {
               id: message.from,
-              name: message.payload.name,
+              name: joinName,
               isHost: false,
             }
-            // 立即更新ref避免竞态条件
             const updated = [...playersRef.current, newPlayer]
             playersRef.current = updated
             setOnlinePlayers(updated)
@@ -263,6 +287,7 @@ export default function MonopolyGame() {
         case 'dice-rolled': {
           if (!peer.getIsHost()) {
             const { dice: diceValues, playerIndex } = message.payload
+            animatingRef.current = true
             playDiceRoll()
             rendererRef.current?.playDiceAnimation(diceValues, () => {
               playDiceLand()
@@ -276,11 +301,11 @@ export default function MonopolyGame() {
                   const steps = diceValues[0] + diceValues[1]
                   rendererRef.current?.playMoveAnimation(
                     player.id, oldPos, steps, player.color, player.avatar,
-                    () => {},
+                    () => { animatingRef.current = false },
                     () => playStepSound()
                   )
-                }
-              }
+                } else { animatingRef.current = false }
+              } else { animatingRef.current = false }
             })
           }
           break
@@ -289,14 +314,25 @@ export default function MonopolyGame() {
         case 'game-state': {
           if (!peer.getIsHost()) {
             const { game: newGame, messages: newMsgs } = message.payload
-            setGame(newGame)
-            setMessages(newMsgs)
-            setRolling(false)  // 收到新状态后重置掷骰状态
+            if (animatingRef.current) {
+              gameRef.current = newGame
+              messagesRef.current = newMsgs
+              setTimeout(() => {
+                setGame(newGame)
+                setMessages(newMsgs)
+                setRolling(false)
+              }, 800)
+            } else {
+              setGame(newGame)
+              setMessages(newMsgs)
+              setRolling(false)
+            }
             // 收到游戏状态时自动进入游戏画面
             if (newGame && screenRef.current !== 'game' && screenRef.current !== 'end') {
               setScreen('game')
               setBuyPrompt(null)
               setDiceResult(null)
+              peer.startHeartbeat()
             }
             if (newGame.gameOver) setScreen('end')
 
@@ -331,7 +367,10 @@ export default function MonopolyGame() {
               const dice = rollDice()
               executeOnlineTurnRef.current(dice)
             } else if (message.payload.type === 'buy') {
-              // 清除购买超时
+              if (gs.phase !== 'action') break
+              const buyPlayerIdx = gs.players.findIndex(p => p.name === message.payload.playerName)
+              if (buyPlayerIdx !== gs.currentPlayer) break
+
               if (buyTimeoutRef.current) {
                 clearTimeout(buyTimeoutRef.current)
                 buyTimeoutRef.current = null
@@ -350,10 +389,17 @@ export default function MonopolyGame() {
                 newMsgs.push(`❌ ${player.name} 放弃购买 ${tile.name}`)
               }
 
-              newState.phase = 'roll'
+              const finalMsgs = finalizeTurn(newState)
+              for (const msg of finalMsgs) {
+                if (msg.includes('破产')) playBankruptSound()
+              }
+              newMsgs.push(...finalMsgs)
+
               setMessages(newMsgs)
               setGame(newState)
               broadcastState(newState, newMsgs)
+
+              if (newState.gameOver) setScreen('end')
             }
           }
           break
@@ -391,6 +437,12 @@ export default function MonopolyGame() {
     setConnectionError('')
 
     try {
+      // 先销毁旧的连接
+      if (peerRef.current) {
+        peerRef.current.destroy()
+        peerRef.current = null
+      }
+
       const peer = new PeerManager()
       await peer.initialize(playerName)
       peerRef.current = peer
@@ -428,6 +480,12 @@ export default function MonopolyGame() {
     setConnectionError('')
 
     try {
+      // 先销毁旧的连接
+      if (peerRef.current) {
+        peerRef.current.destroy()
+        peerRef.current = null
+      }
+
       const peer = new PeerManager()
       await peer.initialize(playerName)
       peerRef.current = peer
@@ -493,6 +551,7 @@ export default function MonopolyGame() {
     setBuyPrompt(null)
     setDiceResult(null)
 
+    peer.startHeartbeat()
     broadcastState(newGame, newGame.log)
   }
 
@@ -518,6 +577,8 @@ export default function MonopolyGame() {
   // ===== 掷骰子 =====
   const handleRoll = useCallback(() => {
     if (!game || rolling || paused || !currentPlayer || currentPlayer.bankrupt) return
+    if (game.phase !== 'roll') return
+    if (mode !== 'online' && currentPlayer.isAI) return
 
     // Online mode: only allow rolling on my turn
     if (mode === 'online' && !isMyTurn) return
@@ -525,10 +586,7 @@ export default function MonopolyGame() {
     setRolling(true)
     setBuyPrompt(null)
 
-    const dice = rollDice()
-    playDiceRoll()
-
-    // Online guest: send action to host
+    // Online guest: send action to host (don't roll dice or play sound locally)
     if (mode === 'online' && onlineRole === 'guest') {
       const peer = peerRef.current
       if (peer) {
@@ -546,6 +604,9 @@ export default function MonopolyGame() {
     }
 
     // Local/AI mode or online host: execute locally
+    const dice = rollDice()
+    playDiceRoll()
+
     // Online host: broadcast dice event to guests for animation sync
     if (mode === 'online' && onlineRole === 'host') {
       const peer = peerRef.current
@@ -602,13 +663,15 @@ export default function MonopolyGame() {
                   const latestGs = gameRef.current
                   if (latestGs && latestGs.phase === 'action') {
                     const skipState: GameState = JSON.parse(JSON.stringify(latestGs))
-                    skipState.phase = 'roll'
                     const skipPlayer = skipState.players[skipState.currentPlayer]
                     const skipTile = BOARD[skipPlayer.position]
                     const skipMsgs = [...messagesRef.current, `❌ ${skipPlayer.name} 放弃购买 ${skipTile.name}`]
+                    const finalMsgs = finalizeTurn(skipState)
+                    skipMsgs.push(...finalMsgs)
                     setMessages(skipMsgs)
                     setGame(skipState)
                     broadcastState(skipState, skipMsgs)
+                    if (skipState.gameOver) setScreen('end')
                   }
                   buyTimeoutRef.current = null
                 }, 10000)
@@ -675,15 +738,24 @@ export default function MonopolyGame() {
       newMsgs.push(`❌ ${player.name} 放弃购买 ${tile.name}`)
     }
 
-    newState.phase = 'roll'
+    const finalMsgs = finalizeTurn(newState)
+    for (const msg of finalMsgs) {
+      if (msg.includes('破产')) playBankruptSound()
+    }
+    newMsgs.push(...finalMsgs)
+
     setBuyPrompt(null)
     setMessages(newMsgs)
     setGame(newState)
 
+    if (newState.gameOver) {
+      setScreen('end')
+    }
+
     // Online host: broadcast state
     if (mode === 'online' && onlineRole === 'host') {
       broadcastState(newState, newMsgs)
-    } else {
+    } else if (!newState.gameOver) {
       setTimeout(() => processAITurns(newState, []), 400)
     }
   }, [game, currentPlayer, mode, onlineRole, roomId, playerName, broadcastState])

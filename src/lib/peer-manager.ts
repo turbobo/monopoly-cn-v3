@@ -9,7 +9,7 @@ const PROD_PEER_PATH = '/'               // 例如: '/peerjs'
 const PROD_PEER_SECURE = true
 
 export interface PeerMessage {
-  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled'
+  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled' | 'ping' | 'pong'
   payload: any
   from: string
   timestamp: number
@@ -36,6 +36,11 @@ export class PeerManager {
   private playerName: string = ''
   private peerId: string = ''
   private initialized: boolean = false
+  private reconnectAttempts: number = 0
+  private maxReconnectAttempts: number = 3
+  private destroyed: boolean = false
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null
+  private peerLastPong: Map<string, number> = new Map()
 
   constructor() {}
 
@@ -115,9 +120,19 @@ export class PeerManager {
       })
 
       this.peer.on('disconnected', () => {
-        console.log('[PeerManager] Peer disconnected, attempting reconnect...')
-        if (!this.peer.destroyed) {
-          this.peer.reconnect()
+        if (this.destroyed) return
+        this.reconnectAttempts++
+        if (this.reconnectAttempts <= this.maxReconnectAttempts && !this.peer.destroyed) {
+          const delay = Math.min(1000 * this.reconnectAttempts, 5000)
+          console.log(`[PeerManager] Peer disconnected, reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`)
+          setTimeout(() => {
+            if (!this.destroyed && !this.peer.destroyed) {
+              this.peer.reconnect()
+            }
+          }, delay)
+        } else {
+          console.log('[PeerManager] Max reconnect attempts reached, giving up')
+          this.errorHandlers.forEach(h => h(new Error('与信令服务器断开连接')))
         }
       })
 
@@ -133,26 +148,35 @@ export class PeerManager {
 
   // 处理传入的连接（房主接收）
   private handleIncomingConnection(conn: any) {
-    console.log('[PeerManager] Incoming connection from:', conn.peer)
+    console.log('[PeerManager] Incoming connection from:', conn.peer, '| conn.open:', conn.open, '| conn.type:', conn.type)
     
     conn.on('open', () => {
+      console.log('[PeerManager] ✅ Incoming conn OPENED from:', conn.peer)
       this.connections.set(conn.peer, conn)
       this.connectionHandlers.forEach(h => h(conn.peer))
-      // 保存第一个连接的peer作为roomId（host模式）
-      if (!this.roomId) this.roomId = conn.peer
     })
 
     conn.on('data', (data: PeerMessage) => {
+      if (data.type === 'ping') {
+        conn.send({ type: 'pong', payload: null, from: this.peerId, timestamp: Date.now() })
+        return
+      }
+      if (data.type === 'pong') {
+        this.peerLastPong.set(conn.peer, Date.now())
+        return
+      }
       this.messageHandlers.forEach(h => h(data, conn.peer))
     })
 
     conn.on('close', () => {
+      console.log('[PeerManager] ❌ Conn closed from:', conn.peer)
+      this.peerLastPong.delete(conn.peer)
       this.connections.delete(conn.peer)
       this.disconnectionHandlers.forEach(h => h(conn.peer))
     })
 
     conn.on('error', (err: any) => {
-      console.error('[PeerManager] Connection error:', err)
+      console.error('[PeerManager] Connection error from:', conn.peer, err)
     })
   }
 
@@ -205,7 +229,14 @@ export class PeerManager {
       })
 
       conn.on('data', (data: PeerMessage) => {
-        // 接收房间信息
+        if (data.type === 'ping') {
+          conn.send({ type: 'pong', payload: null, from: this.peerId, timestamp: Date.now() })
+          return
+        }
+        if (data.type === 'pong') {
+          this.peerLastPong.set(hostPeerId, Date.now())
+          return
+        }
         if (data.type === 'room-info') {
           this.roomId = data.payload.roomId || roomId
         }
@@ -213,6 +244,7 @@ export class PeerManager {
       })
 
       conn.on('close', () => {
+        this.peerLastPong.delete(hostPeerId)
         this.connections.delete(hostPeerId)
         this.disconnectionHandlers.forEach(h => h(hostPeerId))
       })
@@ -298,15 +330,54 @@ export class PeerManager {
     this.isHost = isHost
   }
 
-  // 销毁
+  startHeartbeat() {
+    this.stopHeartbeat()
+    this.peerLastPong.clear()
+    this.connections.forEach((_, peerId) => {
+      this.peerLastPong.set(peerId, Date.now())
+    })
+
+    this.heartbeatInterval = setInterval(() => {
+      if (this.destroyed) { this.stopHeartbeat(); return }
+      const now = Date.now()
+      const ping: PeerMessage = { type: 'ping', payload: null, from: this.peerId, timestamp: now }
+
+      this.connections.forEach((conn, peerId) => {
+        if (conn.open) conn.send(ping)
+
+        const lastPong = this.peerLastPong.get(peerId)
+        if (lastPong && now - lastPong > 60000) {
+          console.log('[PeerManager] Heartbeat timeout for:', peerId)
+          this.peerLastPong.delete(peerId)
+          conn.close()
+        }
+      })
+    }, 30000)
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval)
+      this.heartbeatInterval = null
+    }
+  }
+
   destroy() {
+    this.destroyed = true
+    this.stopHeartbeat()
+    this.peerLastPong.clear()
     this.connections.forEach(conn => conn.close())
     this.connections.clear()
     if (this.peer) {
       this.peer.destroy()
+      this.peer = null
     }
     this.messageHandlers = []
     this.connectionHandlers = []
     this.disconnectionHandlers = []
+    this.errorHandlers = []
+    this.initialized = false
+    this.reconnectAttempts = 0
+    console.log('[PeerManager] Destroyed')
   }
 }

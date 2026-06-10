@@ -104,15 +104,9 @@ export const CHANCE_CARDS: { text: string; effect: (gs: GameState) => string }[]
   { text: '回起点领工资 ¥200', effect: (gs) => { gs.players[gs.currentPlayer].position = 0; gs.players[gs.currentPlayer].money += 200; return '回到起点 +¥200'; } },
   { text: '进监狱！直接入狱', effect: (gs) => {
     const player = gs.players[gs.currentPlayer]
-    const oldPos = player.position
     player.position = 7
     player.inJail = true
     player.jailTurns = 0
-    // 如果经过起点（从后面走到位置7），获得¥200
-    if (oldPos > 7) {
-      player.money += 200
-      return '入狱！经过起点 +¥200'
-    }
     return '入狱！'
   }},
 ]
@@ -226,11 +220,6 @@ export function checkBankrupt(player: Player): { bankrupt: boolean; soldTiles: n
       player.bankrupt = true
       return { bankrupt: true, soldTiles }
     }
-  }
-  // 总资产为0：无现金且无地皮，判定破产
-  if (player.money <= 0 && player.properties.length === 0) {
-    player.bankrupt = true
-    return { bankrupt: true, soldTiles }
   }
   return { bankrupt: false, soldTiles }
 }
@@ -474,7 +463,30 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
   return messages
 }
 
-function nextPlayer(gs: GameState) {
+export function finalizeTurn(gs: GameState): string[] {
+  const messages: string[] = []
+  const player = gs.players[gs.currentPlayer]
+
+  const bankruptResult = checkBankrupt(player)
+  for (const tileId of bankruptResult.soldTiles) {
+    messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
+  }
+  if (bankruptResult.bankrupt) {
+    messages.push(`💀 ${player.name} 破产了！`)
+  }
+
+  const activePlayers = gs.players.filter(p => !p.bankrupt)
+  if (activePlayers.length <= 1) {
+    gs.gameOver = true
+    gs.winner = activePlayers[0]?.id ?? null
+    messages.push(`🎉 游戏结束！${activePlayers[0]?.name} 获胜！`)
+  }
+
+  nextPlayer(gs)
+  return messages
+}
+
+export function nextPlayer(gs: GameState) {
   let next = (gs.currentPlayer + 1) % gs.players.length
   let safety = 0
   while (gs.players[next].bankrupt && safety < gs.players.length) {
