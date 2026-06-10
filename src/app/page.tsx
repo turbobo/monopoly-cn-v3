@@ -53,7 +53,13 @@ export default function MonopolyGame() {
 
   // 在线模式状态
   const [onlineRole, setOnlineRole] = useState<OnlineRole>(null)
-  const [playerName, setPlayerName] = useState('玩家1')
+  const [playerName, setPlayerName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('monopoly-player-name')
+      if (saved) return saved
+    }
+    return `玩家${Math.floor(1000 + Math.random() * 9000)}`
+  })
   const [roomId, setRoomId] = useState('')
   const [joinRoomId, setJoinRoomId] = useState('')
   const [onlinePlayers, setOnlinePlayers] = useState<OnlinePlayer[]>([])
@@ -65,7 +71,10 @@ export default function MonopolyGame() {
   useEffect(() => { gameRef.current = game }, [game])
   useEffect(() => { messagesRef.current = messages }, [messages])
   useEffect(() => { onlinePlayersRef.current = onlinePlayers }, [onlinePlayers])
-  useEffect(() => { myNameRef.current = playerName }, [playerName])
+  useEffect(() => {
+    myNameRef.current = playerName
+    if (playerName.trim()) localStorage.setItem('monopoly-player-name', playerName)
+  }, [playerName])
   useEffect(() => { playersRef.current = onlinePlayers }, [onlinePlayers])
   useEffect(() => { screenRef.current = screen }, [screen])
 
