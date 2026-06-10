@@ -240,6 +240,9 @@ export default function MonopolyGame() {
           if (newState.gameOver) {
             setScreen('end')
           }
+
+          // 动画完成后广播 game-state 给客机（确保客机收到最终状态）
+          broadcastState(newState, newMsgs)
         },
         () => playStepSound()
       )
@@ -330,11 +333,11 @@ export default function MonopolyGame() {
               playDiceLand()
               setDiceResult(diceValues[0] + diceValues[1])
 
-              const gs = gameRef.current
+              // 优先用 gameRef（最新状态），fallback 用 payload 中的 newGame
+              const gs = gameRef.current || newGame
               if (gs) {
                 const player = gs.players[playerIndex]
                 if (player) {
-                  // 使用 payload 中的 fromTile（移动前的位置），而非 game-state 中已更新的位置
                   const oldPos = fromTile ?? player.position
                   const steps = diceValues[0] + diceValues[1]
                   rendererRef.current?.playMoveAnimation(
@@ -372,13 +375,32 @@ export default function MonopolyGame() {
         case 'game-state': {
           if (!peer.getIsHost()) {
             const { game: newGame, messages: newMsgs } = message.payload
+
+            // 如果正在播放动画，延迟更新（等动画回调先设置购买提示）
+            if (animatingRef.current) {
+              gameRef.current = newGame
+              messagesRef.current = newMsgs
+              setTimeout(() => {
+                setGame(newGame)
+                setMessages(newMsgs)
+                setRolling(false)
+                // 动画回调应该已设置购买提示，这里只在缺失时补充
+                if (newGame && !newGame.gameOver && newGame.phase === 'action') {
+                  const buyer = newGame.players[newGame.currentPlayer]
+                  if (buyer && buyer.name === myNameRef.current) {
+                    setBuyPrompt({ tile: BOARD[buyer.position] })
+                  }
+                }
+              }, 800)
+              return
+            }
+
             setGame(newGame)
             setMessages(newMsgs)
             setRolling(false)
             // 收到游戏状态时自动进入游戏画面
             if (newGame && screenRef.current !== 'game' && screenRef.current !== 'end') {
               setScreen('game')
-              setBuyPrompt(null)
               setDiceResult(null)
               peer.startHeartbeat()
             }
@@ -852,6 +874,11 @@ export default function MonopolyGame() {
             setScreen('end')
           }
           setRolling(false)
+
+          // 在线房主：动画完成后广播 game-state 确保客机同步
+          if (mode === 'online' && onlineRole === 'host') {
+            broadcastState(newState, newMsgs)
+          }
         },
         () => playStepSound()
       )
