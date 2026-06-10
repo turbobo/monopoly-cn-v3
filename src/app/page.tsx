@@ -332,7 +332,9 @@ export default function MonopolyGame() {
               messagesRef.current = newMsgs || []
             }
             animatingRef.current = true
+            setRolling(true)
             playDiceRoll()
+            // Guest 端用 2x 速度播放骰子动画，补偿网络延迟
             rendererRef.current?.playDiceAnimation(diceValues, () => {
               playDiceLand()
               setDiceResult(diceValues[0] + diceValues[1])
@@ -344,6 +346,7 @@ export default function MonopolyGame() {
                 if (player) {
                   const oldPos = fromTile ?? player.position
                   const steps = diceValues[0] + diceValues[1]
+                  // Guest 端用 1.8x 速度播放移动动画
                   rendererRef.current?.playMoveAnimation(
                     player.id, oldPos, steps, player.color, player.avatar,
                     () => {
@@ -371,11 +374,12 @@ export default function MonopolyGame() {
                         if (lastMsg.includes('破产')) playBankruptSound()
                       }
                     },
-                    () => playStepSound()
+                    () => playStepSound(),
+                    1.8
                   )
                 } else { animatingRef.current = false }
               } else { animatingRef.current = false }
-            })
+            }, 2)
           }
           break
         }
@@ -766,9 +770,11 @@ export default function MonopolyGame() {
           timestamp: Date.now(),
         })
       }
-      // 保持rolling状态，等host广播新状态后自动更新
-      // 超时5秒后自动重置
-      setTimeout(() => setRolling(false), 5000)
+      // 保持rolling状态，等 dice-rolled 回调中自动重置
+      // 超时8秒后自动重置（兜底，防止卡死）
+      setTimeout(() => {
+        if (!animatingRef.current) setRolling(false)
+      }, 8000)
       return
     }
 

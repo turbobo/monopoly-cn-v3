@@ -42,7 +42,7 @@ export class BoardRenderer {
     active: false, values: [1, 1] as [number, number], progress: 0,
     shuffleValues: [1, 1] as [number, number], landed: false,
     onLand: null as (() => void) | null,
-    landBounce: 0, showResult: 0,
+    landBounce: 0, showResult: 0, speedMultiplier: 1,
   }
   private lastDice: [number, number] = [1, 1]
   private diceVisible = false
@@ -96,11 +96,11 @@ export class BoardRenderer {
   isMoving(): boolean { return this.moveAnim.active }
 
   // ===== 逐格移动动画 =====
-  playMoveAnimation(playerId: number, fromTile: number, steps: number, color: string, avatar: string, onComplete: () => void, onStep?: () => void) {
+  playMoveAnimation(playerId: number, fromTile: number, steps: number, color: string, avatar: string, onComplete: () => void, onStep?: () => void, speedMultiplier: number = 1) {
     this.moveAnim = {
       active: true, playerId, fromTile, currentTile: fromTile,
       targetTile: (fromTile + steps) % BOARD_SIZE, stepsLeft: steps,
-      progress: 0, speed: 0.039, color, avatar,
+      progress: 0, speed: 0.039 * speedMultiplier, color, avatar,
       onComplete, onStep: onStep || null,
     }
   }
@@ -187,12 +187,13 @@ export class BoardRenderer {
   }
 
   // ===== 骰子动画 =====
-  playDiceAnimation(values: [number, number], onLand?: () => void) {
+  playDiceAnimation(values: [number, number], onLand?: () => void, speedMultiplier: number = 1) {
     this.diceAnim = {
       active: true, values, progress: 0,
       shuffleValues: [Math.ceil(Math.random() * 6), Math.ceil(Math.random() * 6)],
       landed: false, onLand: onLand || null,
       landBounce: 0, showResult: 0,
+      speedMultiplier,
     }
     this.diceVisible = true
     this.lastDice = values
@@ -204,7 +205,7 @@ export class BoardRenderer {
       if (d.showResult > 0 && d.showResult < 1) d.showResult = Math.min(1, d.showResult + 0.04)
       return
     }
-    d.progress += 0.022
+    d.progress += 0.022 * (d.speedMultiplier || 1)
 
     // 翻滚阶段：快速切换面值（越接近结束越慢）
     const shuffleRate = d.progress < 0.5 ? 0.6 : d.progress < 0.75 ? 0.35 : 0.12
