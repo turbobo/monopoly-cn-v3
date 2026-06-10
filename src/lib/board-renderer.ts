@@ -64,7 +64,10 @@ export class BoardRenderer {
   resize() {
     const container = this.canvas.parentElement
     if (!container) return
-    const maxW = window.innerWidth < 768 ? Math.min(window.innerWidth - 16, 500) : 700
+    const isMobile = window.innerWidth < 768
+    const maxW = isMobile
+      ? Math.min(window.innerWidth - 16, window.innerHeight * 0.55)
+      : Math.min(window.innerWidth * 0.6, window.innerHeight * 0.9)
     const w = Math.min(container.clientWidth - 8, container.clientHeight - 8, maxW)
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     this.canvas.width = w * dpr

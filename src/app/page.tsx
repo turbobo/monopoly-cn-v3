@@ -91,12 +91,17 @@ export default function MonopolyGame() {
     renderer.resize()
     renderer.start()
 
-    const handleResize = () => renderer.resize()
-    const handleOrientation = () => setTimeout(() => renderer.resize(), 100)
+    let resizeTimer: ReturnType<typeof setTimeout>
+    const handleResize = () => {
+      clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => renderer.resize(), 100)
+    }
+    const handleOrientation = () => setTimeout(() => renderer.resize(), 150)
     window.addEventListener('resize', handleResize)
     window.addEventListener('orientationchange', handleOrientation)
 
     return () => {
+      clearTimeout(resizeTimer)
       renderer.stop()
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('orientationchange', handleOrientation)
@@ -844,7 +849,7 @@ export default function MonopolyGame() {
   }
 
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-[#0f1419] overflow-hidden">
+    <div className="flex flex-col md:flex-row bg-[#0f1419] overflow-hidden" style={{ height: '100dvh' }}>
       {/* 控制栏 */}
       {screen === 'game' && (
         <div className="absolute top-3 left-3 z-10 flex gap-2">
@@ -866,7 +871,7 @@ export default function MonopolyGame() {
       )}
 
       {/* 棋盘区域 */}
-      <div className="flex-1 relative flex items-center justify-center p-2 touch-none" style={{ minHeight: 'min(50vh, 400px)' }}>
+      <div className="flex-1 relative flex items-center justify-center p-2 touch-none" style={{ minHeight: 'min(50dvh, 400px)' }}>
         <canvas ref={canvasRef} className="touch-none" />
 
         {/* 主菜单 */}
@@ -1212,7 +1217,7 @@ export default function MonopolyGame() {
 
       {/* ===== 信息面板 ===== */}
       {screen === 'game' && game && (
-        <div className="w-full md:w-80 bg-[#1a2332] md:border-l border-t md:border-t-0 border-white/8 flex flex-col md:h-screen overflow-y-auto md:overflow-hidden shrink-0" style={{ maxHeight: '50vh' }}>
+        <div className="w-full max-h-[45dvh] md:max-h-none md:w-80 bg-[#1a2332] md:border-l border-t md:border-t-0 border-white/8 flex flex-col overflow-y-auto md:overflow-hidden shrink-0">
           {/* 当前玩家 */}
           <div className="p-4 border-b border-white/8 relative overflow-hidden">
             <div className="absolute inset-0 opacity-10" style={{ background: `linear-gradient(135deg, ${currentPlayer?.color}44, transparent)` }} />
