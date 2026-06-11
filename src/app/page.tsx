@@ -744,6 +744,11 @@ export default function MonopolyGame() {
     const turnMessages = executeTurn(precomputedState, dice)
     const precomputedMsgs = [...messagesRef.current, ...turnMessages]
 
+    // 立即更新 ref 为预计算状态，让动画完成时 stateModified 能正确判断
+    // （如果动画期间有外部事件如 Guest 购买/断线修改了 gameRef，stateModified 才为 true）
+    gameRef.current = precomputedState
+    messagesRef.current = precomputedMsgs
+
     const peer = peerRef.current
     if (peer) {
       peer.broadcast({
@@ -772,14 +777,16 @@ export default function MonopolyGame() {
           }
 
           // 检查状态是否已被其他事件修改（Guest 购买/断连等）
-          const stateModified = gameRef.current !== precomputedState &&
-            (gameRef.current?.currentPlayer !== precomputedState.currentPlayer ||
-             gameRef.current?.phase !== precomputedState.phase)
+          // gameRef 在预计算后已指向 precomputedState，若被外部覆盖则引用不同
+          const stateModified = gameRef.current !== precomputedState
 
           if (!stateModified) {
             setMessages(precomputedMsgs)
             setGame(precomputedState)
-            gameRef.current = precomputedState
+          } else {
+            // 外部已修改状态，使用最新的 gameRef
+            setGame(gameRef.current!)
+            setMessages(messagesRef.current)
           }
           animatingRef.current = false
 
