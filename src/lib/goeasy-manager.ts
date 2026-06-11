@@ -293,8 +293,9 @@ export class GoEasyManager {
         onSuccess: () => {
           console.log('[GoEasyManager] Reconnected')
           this.connected = true
-          // 重新订阅频道
+          // 重新订阅频道（先取消旧订阅，防止 onMessage 回调重复注册）
           if (this.channel) {
+            try { this.goeasy!.pubsub.unsubscribe({ channel: this.channel, onFailed: () => {} }) } catch {}
             this.goeasy!.pubsub.subscribe({
               channel: this.channel,
               onMessage: (msg: { content: string }) => {

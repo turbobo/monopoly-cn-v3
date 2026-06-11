@@ -242,9 +242,11 @@ export default function MonopolyGame() {
             )
           } else {
             animatingRef.current = false
+            setRolling(false)
           }
         } else {
           animatingRef.current = false
+          setRolling(false)
         }
       }, 2)
     }
@@ -407,6 +409,8 @@ export default function MonopolyGame() {
                 if (buyProperty(player, tile.id)) {
                   newMsgs.push(`🏠 ${player.name} 购买了 ${tile.name}`)
                   playBuySound()
+                } else {
+                  newMsgs.push(`❌ ${player.name} 资金不足，无法购买 ${tile.name}（需要 ¥${tile.price}）`)
                 }
               } else {
                 newMsgs.push(`❌ ${player.name} 放弃购买 ${tile.name}`)
@@ -767,16 +771,24 @@ export default function MonopolyGame() {
             else if (msg.includes('破产')) playBankruptSound()
           }
 
-          setMessages(precomputedMsgs)
-          setGame(precomputedState)
-          gameRef.current = precomputedState
+          // 检查状态是否已被其他事件修改（Guest 购买/断连等）
+          const stateModified = gameRef.current !== precomputedState &&
+            (gameRef.current?.currentPlayer !== precomputedState.currentPlayer ||
+             gameRef.current?.phase !== precomputedState.phase)
+
+          if (!stateModified) {
+            setMessages(precomputedMsgs)
+            setGame(precomputedState)
+            gameRef.current = precomputedState
+          }
           animatingRef.current = false
 
-          const updatedPlayer = precomputedState.players[precomputedState.currentPlayer]
-          if (precomputedState.phase === 'action') {
-            if (updatedPlayer.name === myNameRef.current) {
+          // 只有状态未被外部修改时才设置购买提示/超时
+          if (!stateModified && precomputedState.phase === 'action') {
+            const updatedPlayer = precomputedState.players[precomputedState.currentPlayer]
+            if (updatedPlayer && updatedPlayer.name === myNameRef.current) {
               setBuyPrompt({ tile: BOARD[updatedPlayer.position] })
-            } else {
+            } else if (updatedPlayer && !updatedPlayer.bankrupt) {
               if (buyTimeoutRef.current) clearTimeout(buyTimeoutRef.current)
               buyTimeoutRef.current = setTimeout(() => {
                 const latestGs = gameRef.current
@@ -794,7 +806,7 @@ export default function MonopolyGame() {
                   if (skipState.gameOver) setScreen('end')
                 }
                 buyTimeoutRef.current = null
-              }, 20000) // 20秒：需要覆盖 Guest 的动画时间(~5s) + 网络延迟(~2s) + 思考时间
+              }, 20000)
             }
           }
 
@@ -930,6 +942,8 @@ export default function MonopolyGame() {
       if (buyProperty(player, tile.id)) {
         newMsgs.push(`🏠 ${player.name} 购买了 ${tile.name}`)
         playBuySound()
+      } else {
+        newMsgs.push(`❌ ${player.name} 资金不足，无法购买 ${tile.name}（需要 ¥${tile.price}）`)
       }
     } else {
       newMsgs.push(`❌ ${player.name} 放弃购买 ${tile.name}`)
@@ -1011,6 +1025,12 @@ export default function MonopolyGame() {
 
   // ===== 重新开始 =====
   const restartGame = () => {
+    if (buyTimeoutRef.current) {
+      clearTimeout(buyTimeoutRef.current)
+      buyTimeoutRef.current = null
+    }
+    animatingRef.current = false
+    pendingDiceRolledRef.current = null
     setScreen('setup')
     setGame(null)
     setMessages([])
@@ -1047,6 +1067,9 @@ export default function MonopolyGame() {
     setGame(null)
     setMessages([])
     setBuyPrompt(null)
+    setDiceResult(null)
+    setRolling(false)
+    setIsMyTurn(false)
   }
 
   return (
@@ -1542,7 +1565,7 @@ export default function MonopolyGame() {
             ) : isCurrentPlayerHuman && !rolling ? (
               <div className="space-y-2">
                 <button onClick={handleRoll}
-                  disabled={paused || (mode === 'online' && !isMyTurn)}
+                  disabled={paused || rolling || currentPlayer?.bankrupt || (mode === 'online' && !isMyTurn)}
                   className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 active:scale-95 text-lg disabled:opacity-50 disabled:cursor-not-allowed">
                   {mode === 'online' && !isMyTurn
                     ? `⏳ 等待 ${currentPlayer?.name} 操作...`

@@ -97,10 +97,14 @@ export class BoardRenderer {
 
   // ===== 逐格移动动画 =====
   playMoveAnimation(playerId: number, fromTile: number, steps: number, color: string, avatar: string, onComplete: () => void, onStep?: () => void, speedMultiplier: number = 1) {
+    if (steps <= 0) {
+      onComplete()
+      return
+    }
     this.moveAnim = {
       active: true, playerId, fromTile, currentTile: fromTile,
       targetTile: (fromTile + steps) % BOARD_SIZE, stepsLeft: steps,
-      progress: 0, speed: 0.039 * speedMultiplier, color, avatar,
+      progress: 0, speed: 0.039 * Math.max(speedMultiplier, 0.1), color, avatar,
       onComplete, onStep: onStep || null,
     }
   }
