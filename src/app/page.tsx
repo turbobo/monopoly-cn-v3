@@ -444,12 +444,14 @@ export default function MonopolyGame() {
         case 'card-action': {
           if (peer.getIsHost()) {
             const gs = gameRef.current
-            if (!gs) break
+            if (!gs || gs.phase !== 'roll') break
             const { cardType, cardId, playerName: actorName, target } = message.payload
             const actorIdx = gs.players.findIndex(p => p.name === actorName)
             if (actorIdx !== gs.currentPlayer) break // 必须是当前回合的玩家才能用卡
             const actor = gs.players[actorIdx]
             if (!actor || actor.bankrupt) break
+            // 验证卡片确实属于该玩家
+            if (!actor.cards.some((c: GameCard) => c.id === cardId)) break
 
             const newState: GameState = JSON.parse(JSON.stringify(gs))
             const player = newState.players[actorIdx]
@@ -459,7 +461,8 @@ export default function MonopolyGame() {
 
             switch (cardType) {
               case 'remote_dice':
-                if (target?.diceTotal && gs.phase === 'roll') {
+                if (target?.diceTotal) {
+                  if (forcedDiceRef.current) break // 防止竞态：已有待处理的强制骰子
                   const [d1, d2] = useRemoteDice(target.diceTotal)
                   msg = `🎯 ${player.name} 使用遥控骰子，指定点数 ${d1}+${d2}=${d1+d2}`
                   const ci = player.cards.findIndex((c: GameCard) => c.id === cardId)
@@ -470,22 +473,21 @@ export default function MonopolyGame() {
                 }
                 break
               case 'swap':
-                if (target?.playerIdx !== undefined && gs.phase === 'roll') {
-                  msg = useSwapCard(newState, player.id, newState.players[target.playerIdx].id)
+                if (target?.playerIdx !== undefined) {
+                  const targetPlayer = newState.players.find(p => p.id === target.playerIdx)
+                  if (targetPlayer) msg = useSwapCard(newState, player.id, targetPlayer.id)
                 }
                 break
               case 'roadblock':
-                if (target?.tileId !== undefined && gs.phase === 'roll') {
+                if (target?.tileId !== undefined) {
                   msg = useRoadblockCard(newState, player.id, target.tileId)
                 }
                 break
               case 'free_pass':
-                if (gs.phase === 'roll') {
-                  msg = useFreePassCard(newState, player.id)
-                }
+                msg = useFreePassCard(newState, player.id)
                 break
               case 'price_hike':
-                if (target?.tileId !== undefined && gs.phase === 'roll') {
+                if (target?.tileId !== undefined) {
                   msg = usePriceHikeCard(newState, player.id, target.tileId)
                 }
                 break
@@ -1154,6 +1156,7 @@ export default function MonopolyGame() {
     switch (card.type) {
       case 'remote_dice':
         if (target?.diceTotal) {
+          if (forcedDiceRef.current) return // 防止竞态：已有待处理的强制骰子
           const [d1, d2] = useRemoteDice(target.diceTotal)
           msg = `🎯 ${player.name} 使用遥控骰子，指定点数 ${d1}+${d2}=${d1+d2}`
           const cardIdx = player.cards.findIndex(c => c.id === card.id)
@@ -1165,7 +1168,8 @@ export default function MonopolyGame() {
         break
       case 'swap':
         if (target?.playerIdx !== undefined) {
-          msg = useSwapCard(newState, player.id, newState.players[target.playerIdx].id)
+          const targetPlayer = newState.players.find(p => p.id === target.playerIdx)
+          if (targetPlayer) msg = useSwapCard(newState, player.id, targetPlayer.id)
         }
         break
       case 'roadblock':
