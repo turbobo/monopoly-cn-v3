@@ -8,7 +8,7 @@ import {
   rollDice, finalizeTurn, useRemoteDice, useSwapCard, useRoadblockCard,
   useFreePassCard, usePriceHikeCard,
 } from '@/lib/game-engine'
-import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, setMuted } from '@/lib/sound'
+import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, playPlayerJoinSound, playPlayerLeaveSound, setMuted } from '@/lib/sound'
 import { GoEasyManager, PeerMessage } from '@/lib/goeasy-manager'
 import { slimGame, trimMessages, mergeMessages } from '@/lib/online-utils'
 
@@ -137,7 +137,10 @@ export default function MonopolyGame() {
   // 同步游戏状态到 Canvas
   useEffect(() => {
     if (game && rendererRef.current) {
-      rendererRef.current.draw(game.players, game.players[game.currentPlayer]?.position)
+      rendererRef.current.draw(game.players, game.players[game.currentPlayer]?.position, {
+        roadblocks: game.roadblocks,
+        priceHikes: game.priceHikes,
+      })
       rendererRef.current.setCurrentPlayer(game.currentPlayer)
     }
   }, [game])
@@ -283,6 +286,7 @@ export default function MonopolyGame() {
             const updated = [...playersRef.current, newPlayer]
             playersRef.current = updated
             setOnlinePlayers(updated)
+            playPlayerJoinSound()
             peer.broadcast({
               type: 'room-info',
               payload: {
@@ -302,8 +306,12 @@ export default function MonopolyGame() {
               name: p.name,
               isHost: p.isHost,
             }))
+            const prevCount = playersRef.current.length
             playersRef.current = players
             setOnlinePlayers(players)
+            // 人数变化时播放提示音
+            if (prevCount > 0 && players.length > prevCount) playPlayerJoinSound()
+            else if (prevCount > 0 && players.length < prevCount) playPlayerLeaveSound()
             const myEntry = players.find((p: OnlinePlayer) => p.id === peer.getClientId())
             if (myEntry && myEntry.name !== myNameRef.current) {
               setConnectionError(`名称已被占用，已自动改为「${myEntry.name}」`)
@@ -516,6 +524,7 @@ export default function MonopolyGame() {
             const updated = playersRef.current.filter(p => p.id !== fromPeerId)
             playersRef.current = updated
             setOnlinePlayers(updated)
+            playPlayerLeaveSound()
             peer.broadcast({
               type: 'room-info',
               payload: {
@@ -616,6 +625,7 @@ export default function MonopolyGame() {
         const updated = playersRef.current.filter(p => p.id !== peerId)
         playersRef.current = updated
         setOnlinePlayers(updated)
+        playPlayerLeaveSound()
         peer.broadcast({
           type: 'room-info',
           payload: {

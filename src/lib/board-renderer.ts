@@ -1,5 +1,11 @@
 // 大富翁中国行 - Canvas棋盘渲染 (v4: 占领强化+逐格移动动画)
-import { BOARD, BOARD_SIZE, Player } from './game-engine'
+import { BOARD, BOARD_SIZE, Player, Roadblock } from './game-engine'
+
+// 道具卡地图标记数据
+interface TileEffects {
+  roadblocks: Roadblock[]
+  priceHikes: { tileId: number; ownerPlayerId: number; roundsLeft: number }[]
+}
 
 interface Particle {
   x: number; y: number; vx: number; vy: number
@@ -49,6 +55,7 @@ export class BoardRenderer {
   private currentHighlight = -1
   private lastPlayers: Player[] | undefined
   private lastHighlightTile: number | undefined
+  private lastEffects: TileEffects = { roadblocks: [], priceHikes: [] }
 
   // 逐格移动动画
   private moveAnim: MoveAnim = {
@@ -258,12 +265,14 @@ export class BoardRenderer {
   }
 
   // ===== 主绘制 =====
-  draw(players?: Player[], highlightTile?: number) {
+  draw(players?: Player[], highlightTile?: number, effects?: TileEffects) {
     if (players) this.lastPlayers = players
     if (highlightTile !== undefined) this.lastHighlightTile = highlightTile
+    if (effects) this.lastEffects = effects
 
     const usePlayers = players || this.lastPlayers
     const useHighlight = highlightTile ?? this.lastHighlightTile
+    const useEffects = effects || this.lastEffects
 
     const { ctx, size } = this
     ctx.clearRect(0, 0, size, size)
@@ -303,7 +312,7 @@ export class BoardRenderer {
     ctx.fillRect(0, 0, size, size * 0.5)
     ctx.restore()
 
-    this.drawBoard(useHighlight, usePlayers)
+    this.drawBoard(useHighlight, usePlayers, useEffects)
     this.drawCenter()
     if (usePlayers) this.drawPlayers(usePlayers)
     this.drawFloatingTexts()
@@ -357,7 +366,7 @@ export class BoardRenderer {
   }
 
   // ===== 棋盘（深色高级格子） =====
-  private drawBoard(highlightTile?: number, players?: Player[]) {
+  private drawBoard(highlightTile?: number, players?: Player[], effects?: TileEffects) {
     const { ctx } = this
     const pad = 2
 
@@ -368,8 +377,14 @@ export class BoardRenderer {
       const cx = pos.x + pos.w / 2
       const cy = pos.y + pos.h / 2
 
+      // 检查该格子是否有道具卡效果
+      const hasRoadblock = effects?.roadblocks.some(r => r.tileId === tile.id)
+      const hasPriceHike = effects?.priceHikes.some(h => h.tileId === tile.id)
+
       // --- 格子卡片背景 ---
       const bgColor = i === highlightTile ? 'rgba(139,92,246,0.3)'
+        : hasRoadblock ? 'rgba(255,100,50,0.2)'
+        : hasPriceHike ? 'rgba(255,200,50,0.2)'
         : owner ? 'rgba(255,255,255,0.12)'
         : 'rgba(255,255,255,0.06)'
 
@@ -403,6 +418,24 @@ export class BoardRenderer {
           ctx.font = '13px "Noto Sans SC", sans-serif'
           ctx.fillText(`¥${tile.price}`, cx, cy + 23)
         }
+      }
+
+      // --- 道具卡效果角标 ---
+      if (hasRoadblock) {
+        const badgeX = pos.x + pos.w - pad - 4
+        const badgeY = pos.y + pad + 4
+        ctx.font = '14px sans-serif'
+        ctx.textAlign = 'right'
+        ctx.textBaseline = 'top'
+        ctx.fillText('🚧', badgeX, badgeY)
+      }
+      if (hasPriceHike) {
+        const badgeX = pos.x + pad + 4
+        const badgeY = pos.y + pad + 4
+        ctx.font = '14px sans-serif'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'top'
+        ctx.fillText('📈', badgeX, badgeY)
       }
     }
   }

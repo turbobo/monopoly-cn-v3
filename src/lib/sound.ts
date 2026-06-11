@@ -186,3 +186,47 @@ export function playBankruptSound() {
     osc.stop(now + i * 0.15 + 0.2)
   }
 }
+
+// 玩家加入房间：上升的叮咚声
+export function playPlayerJoinSound() {
+  if (muted) return
+  const ctx = getCtx()
+  if (!ctx) return
+  const now = ctx.currentTime
+
+  const notes = [440, 554, 659] // A4, C#5, E5 上升三连音
+  notes.forEach((freq, i) => {
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.value = freq
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0, now + i * 0.1)
+    gain.gain.linearRampToValueAtTime(0.15, now + i * 0.1 + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.18)
+    osc.connect(gain).connect(ctx.destination)
+    osc.start(now + i * 0.1)
+    osc.stop(now + i * 0.1 + 0.2)
+  })
+}
+
+// 玩家离开房间：下降的低沉音
+export function playPlayerLeaveSound() {
+  if (muted) return
+  const ctx = getCtx()
+  if (!ctx) return
+  const now = ctx.currentTime
+
+  const notes = [523, 392, 330] // C5, G4, E4 下降三连音
+  notes.forEach((freq, i) => {
+    const osc = ctx.createOscillator()
+    osc.type = 'triangle'
+    osc.frequency.value = freq
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0, now + i * 0.12)
+    gain.gain.linearRampToValueAtTime(0.1, now + i * 0.12 + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.2)
+    osc.connect(gain).connect(ctx.destination)
+    osc.start(now + i * 0.12)
+    osc.stop(now + i * 0.12 + 0.25)
+  })
+}
