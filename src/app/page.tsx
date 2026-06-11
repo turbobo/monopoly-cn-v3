@@ -55,6 +55,7 @@ export default function MonopolyGame() {
   const [muted, setMutedState] = useState(false)
   const [selectedCard, setSelectedCard] = useState<GameCard | null>(null)
   const [showCardPanel, setShowCardPanel] = useState(false)
+  const [tileInfo, setTileInfo] = useState<{ tileIndex: number; x: number; y: number } | null>(null)
 
   // 在线模式状态
   const [onlineRole, setOnlineRole] = useState<OnlineRole>(null)
@@ -1078,10 +1079,53 @@ export default function MonopolyGame() {
     }
   }, [mode, onlineRole, roomId, playerName, broadcastState])
 
+  // ===== 棋盘点击：显示地皮信息 =====
+  const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const renderer = rendererRef.current
+    if (!renderer || !game) return
+
+    const tileIdx = renderer.hitTest(e.clientX, e.clientY)
+    if (tileIdx < 0) {
+      setTileInfo(null)
+      return
+    }
+
+    // 已选中同一格则关闭
+    if (tileInfo?.tileIndex === tileIdx) {
+      setTileInfo(null)
+      return
+    }
+
+    // 获取格子的屏幕坐标，用于弹窗定位
+    const center = renderer.getTileScreenCenter(tileIdx)
+    if (center) {
+      setTileInfo({ tileIndex: tileIdx, x: center.x, y: center.y })
+    }
+  }, [game, tileInfo])
+
+  // 点击空白区域关闭弹窗
+  const handleCanvasTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    const renderer = rendererRef.current
+    if (!renderer || !game || e.touches.length !== 1) return
+    const touch = e.touches[0]
+    const tileIdx = renderer.hitTest(touch.clientX, touch.clientY)
+    if (tileIdx < 0) {
+      setTileInfo(null)
+    } else if (tileInfo?.tileIndex !== tileIdx) {
+      const center = renderer.getTileScreenCenter(tileIdx)
+      if (center) setTileInfo({ tileIndex: tileIdx, x: center.x, y: center.y })
+    }
+  }, [game, tileInfo])
+
   // ===== 道具卡使用 =====
   const handleUseCard = useCallback((card: GameCard, target?: { playerIdx?: number; tileId?: number; diceTotal?: number }) => {
     const latestGame = gameRef.current
-    if (!latestGame) return
+    if (!latestGame || latestGame.phase !== 'roll') return
+    // 在线模式下只能在自己的回合使用
+    if (mode === 'online') {
+      const myIdx = latestGame.players.findIndex(p => p.name === playerName)
+      if (myIdx < 0 || myIdx !== latestGame.currentPlayer) return
+    }
     const currentPlayerObj = latestGame.players[latestGame.currentPlayer]
     if (!currentPlayerObj || currentPlayerObj.bankrupt) return
 
@@ -1292,7 +1336,182 @@ export default function MonopolyGame() {
 
       {/* 棋盘区域 */}
       <div className="flex-1 relative flex items-center justify-center p-2 touch-none" style={{ minHeight: 'min(50dvh, 400px)' }}>
-        <canvas ref={canvasRef} className="touch-none" />
+        <canvas ref={canvasRef} className="touch-none cursor-pointer"
+          onClick={handleCanvasClick}
+          onTouchEnd={(e) => {
+            if (e.changedTouches.length === 1) {
+              const t = e.changedTouches[0]
+              const renderer = rendererRef.current
+              if (!renderer || !game) return
+              const tileIdx = renderer.hitTest(t.clientX, t.clientY)
+              if (tileIdx < 0) { setTileInfo(null); return }
+              if (tileInfo?.tileIndex === tileIdx) { setTileInfo(null); return }
+              const center = renderer.getTileScreenCenter(tileIdx)
+              if (center) setTileInfo({ tileIndex: tileIdx, x: center.x, y: center.y })
+            }
+          }}
+        />
+
+        {/* 地皮信息弹窗 */}
+        {tileInfo && game && (() => {
+          const tile = BOARD[tileInfo.tileIndex]
+          if (!tile) return null
+
+          // 查找拥有者
+          const owner = game.players.find(p => p.properties.includes(tile.id))
+
+          // 查找涨价状态
+          const hike = game.priceHikes?.find(h => h.tileId === tile.id)
+
+          // 查找路障
+          const hasRoadblock = game.roadblocks?.some(r => r.tileId === tile.id)
+
+          // 计算弹窗位置：基于canvas容器
+          const boardArea = document.querySelector('.flex-1.relative.flex') as HTMLElement
+          const rect = boardArea?.getBoundingClientRect()
+          if (!rect) return null
+
+          const relX = tileInfo.x - rect.left
+          const relY = tileInfo.y - rect.top
+          // 弹窗偏移，避免遮挡格子
+          const popX = relX > rect.width / 2 ? relX - 220 : relX + 20
+          const popY = Math.max(8, Math.min(relY - 60, rect.height - 240))
+
+          // 类型描述
+          const typeDesc: Record<string, string> = {
+            property: '商业地产',
+            railroad: '交通设施',
+            utility: '公用事业',
+            chance: '机会卡',
+            tax: '税务',
+            start: '起点',
+            jail: '监狱探访',
+            parking: '免费停车',
+            goto_jail: '入狱',
+          }
+
+          return (
+            <div
+              className="absolute z-30 pointer-events-auto bounce-in"
+              style={{ left: popX, top: popY, width: 200 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#1a1f2e]/95 backdrop-blur-md border border-white/15 rounded-xl p-3 shadow-2xl shadow-black/50">
+                {/* 头部 */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xl">{tile.emoji}</span>
+                    <span className="text-gray-100 font-bold text-sm">{tile.name}</span>
+                  </div>
+                  <button onClick={() => setTileInfo(null)}
+                    className="w-5 h-5 rounded-full bg-white/10 text-gray-400 text-xs flex items-center justify-center hover:bg-white/20 transition-colors">
+                    ✕
+                  </button>
+                </div>
+
+                {/* 类型标签 */}
+                <div className="flex items-center gap-1.5 mb-2.5">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-gray-400">
+                    {typeDesc[tile.type] || tile.type}
+                  </span>
+                  {tile.color && (
+                    <span className="w-3 h-3 rounded-full border border-white/20"
+                      style={{ backgroundColor: tile.color }} />
+                  )}
+                  {hike && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-medium">
+                      📈 涨价中({hike.roundsLeft}回合)
+                    </span>
+                  )}
+                  {hasRoadblock && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-medium">
+                      🚧 路障
+                    </span>
+                  )}
+                </div>
+
+                {/* 拥有者 */}
+                {owner && (
+                  <div className="flex items-center gap-1.5 mb-2 py-1.5 px-2 rounded-lg bg-white/5">
+                    <span className="text-xs">{owner.avatar}</span>
+                    <span className="text-xs text-gray-300">{owner.name}</span>
+                    <span className="text-[10px] ml-auto px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">
+                      拥有者
+                    </span>
+                  </div>
+                )}
+                {!owner && tile.price > 0 && (
+                  <div className="py-1.5 px-2 mb-2 rounded-lg bg-white/5">
+                    <span className="text-[10px] text-gray-500">暂无拥有者</span>
+                  </div>
+                )}
+
+                {/* 价格和租金 */}
+                {tile.price > 0 && (
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">价格</span>
+                      <span className="text-amber-400 font-bold">¥{tile.price}</span>
+                    </div>
+                    {tile.rent.length > 0 && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">基础租金</span>
+                          <span className="text-gray-300">¥{tile.rent[0]}</span>
+                        </div>
+                        {tile.rent[1] && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">同色加成</span>
+                            <span className="text-blue-400">¥{tile.rent[1]}</span>
+                          </div>
+                        )}
+                        {tile.rent[2] && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">全套租金</span>
+                            <span className="text-purple-400 font-medium">¥{tile.rent[2]}</span>
+                          </div>
+                        )}
+                        {hike && owner && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">涨价后</span>
+                            <span className="text-red-400 font-bold">¥{tile.rent[0] * 2}</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* 特殊格子描述 */}
+                {tile.type === 'chance' && (
+                  <div className="text-[10px] text-gray-500 mt-2">
+                    停留时随机触发事件：获得/失去金钱、移动等
+                  </div>
+                )}
+                {tile.type === 'tax' && (
+                  <div className="text-[10px] text-gray-500 mt-2">
+                    停留时需缴纳固定税金
+                  </div>
+                )}
+                {tile.type === 'goto_jail' && (
+                  <div className="text-[10px] text-gray-500 mt-2">
+                    踩到此格直接送入监狱，无法经过起点领薪
+                  </div>
+                )}
+                {tile.type === 'start' && (
+                  <div className="text-[10px] text-gray-500 mt-2">
+                    经过或停留起点时获得 ¥{Math.round((game.players[0]?.money || 1500) * 0.15)} 工资
+                  </div>
+                )}
+                {tile.type === 'parking' && (
+                  <div className="text-[10px] text-gray-500 mt-2">
+                    安全区域，不会发生任何事件
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* 主菜单 */}
         {screen === 'menu' && (
@@ -1885,7 +2104,7 @@ export default function MonopolyGame() {
                     : '🎲 掷骰子'}
                 </button>
                 {/* 道具卡按钮 */}
-                {currentPlayer && currentPlayer.cards.length > 0 && game?.phase === 'roll' && (
+                {currentPlayer && currentPlayer.cards.length > 0 && game?.phase === 'roll' && (mode !== 'online' || isMyTurn) && (
                   <button onClick={() => setShowCardPanel(!showCardPanel)}
                     className="w-full py-2 bg-purple-600/30 border border-purple-500/40 rounded-lg text-purple-300 text-sm font-medium hover:bg-purple-600/50 transition-colors flex items-center justify-center gap-2">
                     🃏 道具卡 ({currentPlayer.cards.length})

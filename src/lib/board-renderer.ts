@@ -328,6 +328,34 @@ export class BoardRenderer {
     return { x, y, w, h, side, isCorner }
   }
 
+  // 将屏幕坐标转换为棋盘格子索引，未命中返回 -1
+  hitTest(clientX: number, clientY: number): number {
+    const rect = this.canvas.getBoundingClientRect()
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const px = (clientX - rect.left) * dpr
+    const py = (clientY - rect.top) * dpr
+
+    for (let i = 0; i < BOARD_SIZE; i++) {
+      const pos = this.getTilePosition(i)
+      if (px >= pos.x && px <= pos.x + pos.w && py >= pos.y && py <= pos.y + pos.h) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  // 获取指定格子在屏幕上的中心坐标（CSS像素）
+  getTileScreenCenter(index: number): { x: number; y: number } | null {
+    if (index < 0 || index >= BOARD_SIZE) return null
+    const pos = this.getTilePosition(index)
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const rect = this.canvas.getBoundingClientRect()
+    return {
+      x: rect.left + (pos.x + pos.w / 2) / dpr,
+      y: rect.top + (pos.y + pos.h / 2) / dpr,
+    }
+  }
+
   // ===== 棋盘（深色高级格子） =====
   private drawBoard(highlightTile?: number, players?: Player[]) {
     const { ctx } = this

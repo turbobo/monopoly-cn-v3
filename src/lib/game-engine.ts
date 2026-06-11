@@ -431,10 +431,15 @@ export function useSwapCard(gs: GameState, userPlayerId: number, targetPlayerId:
 export function useRoadblockCard(gs: GameState, userPlayerId: number, tileId: number): string {
   const user = gs.players.find(p => p.id === userPlayerId)
   if (!user || user.bankrupt) return ''
+  // 不允许在特殊格子上放置路障
+  const tile = BOARD[tileId]
+  if (['start', 'jail', 'parking', 'goto_jail'].includes(tile.type)) {
+    return `❌ 不能在${tile.name}放置路障！`
+  }
   gs.roadblocks.push({ tileId, ownerPlayerId: userPlayerId })
   const cardIdx = user.cards.findIndex(c => c.type === 'roadblock')
   if (cardIdx >= 0) user.cards.splice(cardIdx, 1)
-  return `🚧 ${user.name} 在 ${BOARD[tileId].name} 放置了路障！`
+  return `🚧 ${user.name} 在 ${tile.name} 放置了路障！`
 }
 
 // 使用免费卡 → 标记激活
