@@ -36,6 +36,7 @@ export default function MonopolyGame() {
   const screenRef = useRef<Screen>('menu')
   const animatingRef = useRef(false)
   const roomValidatedRef = useRef(false)
+  const pendingDiceRolledRef = useRef<PeerMessage | null>(null)
   // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
   const [mode, setMode] = useState<GameMode>('local')
@@ -171,6 +172,80 @@ export default function MonopolyGame() {
 
   // ===== 注册 LeanCloud 消息处理 =====
   const setupPeerHandlers = useCallback((peer: GoEasyManager) => {
+
+    // Guest 端播放 dice-rolled 动画（提取为函数，支持补播）
+    const playGuestDiceRolled = (
+      diceValues: [number, number], playerIndex: number, fromTile: number,
+      newGame: GameState | null, newMsgs: string[]
+    ) => {
+      if (newGame) {
+        gameRef.current = newGame
+        messagesRef.current = newMsgs || []
+      }
+      animatingRef.current = true
+      setRolling(true)
+      playDiceRoll()
+
+      rendererRef.current?.playDiceAnimation(diceValues, () => {
+        playDiceLand()
+        setDiceResult(diceValues[0] + diceValues[1])
+
+        const gs = gameRef.current || newGame
+        if (gs) {
+          const player = gs.players[playerIndex]
+          if (player) {
+            const oldPos = fromTile ?? player.position
+            const steps = diceValues[0] + diceValues[1]
+
+            rendererRef.current?.playMoveAnimation(
+              player.id, oldPos, steps, player.color, player.avatar,
+              () => {
+                animatingRef.current = false
+                const latestGame = gameRef.current || newGame
+                const latestMsgs = messagesRef.current || newMsgs || []
+                if (latestGame) {
+                  setGame(latestGame)
+                  setMessages(latestMsgs)
+                  setRolling(false)
+                  gameRef.current = latestGame
+                  if (latestGame.gameOver) setScreen('end')
+                  if (latestGame.phase === 'action') {
+                    const buyer = latestGame.players[latestGame.currentPlayer]
+                    if (buyer && buyer.name === myNameRef.current) {
+                      setBuyPrompt({ tile: BOARD[buyer.position] })
+                    }
+                  } else {
+                    setBuyPrompt(null)
+                  }
+                  const lastMsg = latestMsgs[latestMsgs.length - 1] || ''
+                  if (lastMsg.includes('购买')) playBuySound()
+                  if (lastMsg.includes('支付') || lastMsg.includes('缴纳')) playPaySound()
+                  if (lastMsg.includes('破产')) playBankruptSound()
+                }
+
+                // 检查是否有待播放的 dice-rolled
+                const pending = pendingDiceRolledRef.current
+                if (pending) {
+                  pendingDiceRolledRef.current = null
+                  const p = pending.payload
+                  // 用更快的速度补播（3x 骰子，2.5x 移动）
+                  setTimeout(() => {
+                    playGuestDiceRolled(p.dice, p.playerIndex, p.fromTile, p.game, p.messages)
+                  }, 100)
+                }
+              },
+              () => playStepSound(),
+              1.8
+            )
+          } else {
+            animatingRef.current = false
+          }
+        } else {
+          animatingRef.current = false
+        }
+      }, 2)
+    }
+
     const messageHandler = (message: PeerMessage, fromPeerId: string) => {
       switch (message.type) {
         case 'player-join': {
@@ -243,60 +318,18 @@ export default function MonopolyGame() {
         case 'dice-rolled': {
           if (!peer.getIsHost()) {
             const { dice: diceValues, playerIndex, fromTile, game: newGame, messages: newMsgs } = message.payload
-            // dice-rolled 到达时，缓存到 ref（动画回调可能需要）
-            if (newGame) {
-              gameRef.current = newGame
-              messagesRef.current = newMsgs || []
-            }
-            animatingRef.current = true
-            setRolling(true)
-            playDiceRoll()
-            // Guest 端用 2x 速度播放骰子动画，补偿网络延迟
-            rendererRef.current?.playDiceAnimation(diceValues, () => {
-              playDiceLand()
-              setDiceResult(diceValues[0] + diceValues[1])
 
-              // 始终用 gameRef（可能已被 game-state 更新为更新的版本）
-              const gs = gameRef.current || newGame
-              if (gs) {
-                const player = gs.players[playerIndex]
-                if (player) {
-                  const oldPos = fromTile ?? player.position
-                  const steps = diceValues[0] + diceValues[1]
-                  // Guest 端用 1.8x 速度播放移动动画
-                  rendererRef.current?.playMoveAnimation(
-                    player.id, oldPos, steps, player.color, player.avatar,
-                    () => {
-                      animatingRef.current = false
-                      // 用 gameRef 获取最新状态（可能已被 game-state handler 更新）
-                      const latestGame = gameRef.current || newGame
-                      const latestMsgs = messagesRef.current || newMsgs || []
-                      if (latestGame) {
-                        setGame(latestGame)
-                        setMessages(latestMsgs)
-                        setRolling(false)
-                        gameRef.current = latestGame
-                        if (latestGame.gameOver) setScreen('end')
-                        if (latestGame.phase === 'action') {
-                          const buyer = latestGame.players[latestGame.currentPlayer]
-                          if (buyer && buyer.name === myNameRef.current) {
-                            setBuyPrompt({ tile: BOARD[buyer.position] })
-                          }
-                        } else {
-                          setBuyPrompt(null)
-                        }
-                        const lastMsg = latestMsgs[latestMsgs.length - 1] || ''
-                        if (lastMsg.includes('购买')) playBuySound()
-                        if (lastMsg.includes('支付') || lastMsg.includes('缴纳')) playPaySound()
-                        if (lastMsg.includes('破产')) playBankruptSound()
-                      }
-                    },
-                    () => playStepSound(),
-                    1.8
-                  )
-                } else { animatingRef.current = false }
-              } else { animatingRef.current = false }
-            }, 2)
+            // 如果上一个动画还在播放，保存到待播放队列，动画完成后补播
+            if (animatingRef.current) {
+              pendingDiceRolledRef.current = message
+              if (newGame) {
+                gameRef.current = newGame
+                messagesRef.current = newMsgs || []
+              }
+              return
+            }
+
+            playGuestDiceRolled(diceValues, playerIndex, fromTile, newGame, newMsgs)
           }
           break
         }
@@ -384,6 +417,7 @@ export default function MonopolyGame() {
 
               setMessages(newMsgs)
               setGame(newState)
+              gameRef.current = newState
               broadcastState(newState, newMsgs)
 
               if (newState.gameOver) setScreen('end')
@@ -484,6 +518,7 @@ export default function MonopolyGame() {
 
       setMessages(newMsgs)
       setGame(newState)
+      gameRef.current = newState
       broadcastState(newState, newMsgs)
 
       if (newState.gameOver) setScreen('end')
@@ -683,7 +718,10 @@ export default function MonopolyGame() {
     if (!gs || gs.phase !== 'roll') return
     const hostCurrentPlayer = gs.players[gs.currentPlayer]
     if (!hostCurrentPlayer || hostCurrentPlayer.bankrupt) return
+    // 防止动画期间重复执行（网络延迟可能导致重复 action）
+    if (animatingRef.current) return
 
+    animatingRef.current = true
     setRolling(true)
     setBuyPrompt(null)
 
@@ -729,6 +767,7 @@ export default function MonopolyGame() {
           setMessages(precomputedMsgs)
           setGame(precomputedState)
           gameRef.current = precomputedState
+          animatingRef.current = false
 
           const updatedPlayer = precomputedState.players[precomputedState.currentPlayer]
           if (precomputedState.phase === 'action') {
@@ -853,7 +892,10 @@ export default function MonopolyGame() {
 
   // ===== 购买/跳过 =====
   const handleBuy = useCallback((buy: boolean) => {
-    if (!game || !currentPlayer) return
+    const latestGame = gameRef.current
+    if (!latestGame) return
+    const buyingPlayer = latestGame.players[latestGame.currentPlayer]
+    if (!buyingPlayer) return
 
     // 清除购买超时
     if (buyTimeoutRef.current) {
@@ -876,7 +918,7 @@ export default function MonopolyGame() {
       return
     }
 
-    const newState: GameState = JSON.parse(JSON.stringify(game))
+    const newState: GameState = JSON.parse(JSON.stringify(latestGame))
     const player = newState.players[newState.currentPlayer]
     const tile = BOARD[player.position]
     const newMsgs = [...messagesRef.current]
@@ -911,7 +953,7 @@ export default function MonopolyGame() {
     } else if (!newState.gameOver) {
       setTimeout(() => processAITurns(newState, []), 400)
     }
-  }, [game, currentPlayer, mode, onlineRole, roomId, playerName, broadcastState])
+  }, [mode, onlineRole, roomId, playerName, broadcastState])
 
   // ===== AI 回合处理（仅本地/AI模式） =====
   const processAITurnsRef = useRef<(gs: GameState, msgs: string[]) => void>(() => {})
@@ -980,13 +1022,17 @@ export default function MonopolyGame() {
       clearTimeout(buyTimeoutRef.current)
       buyTimeoutRef.current = null
     }
-    if (peerRef.current) {
-      peerRef.current.broadcast({
+    animatingRef.current = false
+    pendingDiceRolledRef.current = null
+    const peerToDestroy = peerRef.current
+    if (peerToDestroy) {
+      peerToDestroy.broadcast({
         type: 'player-leave',
         payload: { name: myNameRef.current },
       })
-      peerRef.current.destroy()
       peerRef.current = null
+      // 延迟销毁，确保 player-leave 消息发出
+      setTimeout(() => peerToDestroy.destroy(), 500)
     }
     setOnlineRole(null)
     setRoomId('')
