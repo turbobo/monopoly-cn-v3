@@ -201,6 +201,7 @@ export default function MonopolyGame() {
               player.id, oldPos, steps, player.color, player.avatar,
               () => {
                 animatingRef.current = false
+                // 用 gameRef 更新棋盘/金钱等最新状态
                 const latestGame = gameRef.current || newGame
                 const latestMsgs = messagesRef.current || newMsgs || []
                 if (latestGame) {
@@ -209,19 +210,21 @@ export default function MonopolyGame() {
                   setRolling(false)
                   gameRef.current = latestGame
                   if (latestGame.gameOver) setScreen('end')
-                  if (latestGame.phase === 'action') {
-                    const buyer = latestGame.players[latestGame.currentPlayer]
-                    if (buyer && buyer.name === myNameRef.current) {
-                      setBuyPrompt({ tile: BOARD[buyer.position] })
-                    }
-                  } else {
-                    setBuyPrompt(null)
-                  }
-                  const lastMsg = latestMsgs[latestMsgs.length - 1] || ''
-                  if (lastMsg.includes('购买')) playBuySound()
-                  if (lastMsg.includes('支付') || lastMsg.includes('缴纳')) playPaySound()
-                  if (lastMsg.includes('破产')) playBankruptSound()
                 }
+                // 购买提示必须用 dice-rolled 时的 newGame（gameRef 可能被后续 game-state 覆盖导致 currentPlayer 不对）
+                const buyDecisionGame = (newGame && newGame.phase === 'action') ? newGame : latestGame
+                if (buyDecisionGame && !buyDecisionGame.gameOver && buyDecisionGame.phase === 'action') {
+                  const buyer = buyDecisionGame.players[buyDecisionGame.currentPlayer]
+                  if (buyer && buyer.name === myNameRef.current) {
+                    setBuyPrompt({ tile: BOARD[buyer.position] })
+                  }
+                } else {
+                  setBuyPrompt(null)
+                }
+                const lastMsg = latestMsgs[latestMsgs.length - 1] || ''
+                if (lastMsg.includes('购买')) playBuySound()
+                if (lastMsg.includes('支付') || lastMsg.includes('缴纳')) playPaySound()
+                if (lastMsg.includes('破产')) playBankruptSound()
 
                 // 检查是否有待播放的 dice-rolled
                 const pending = pendingDiceRolledRef.current
