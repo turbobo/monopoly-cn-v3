@@ -160,12 +160,43 @@ export default function MonopolyGame() {
   }, [game, mode, playerName])
 
   // ===== 在线模式：广播游戏状态 =====
+  // 精简游戏状态用于网络传输（去掉冗余的 log 字段）
+  const slimGame = (gs: GameState): GameState => {
+    const copy = { ...gs, log: [] as string[] }
+    return copy
+  }
+
+  // 裁剪消息数组，只保留最近 N 条，防止 GoEasy 消息超长
+  const trimMessages = (msgs: string[], maxCount = 20): string[] => {
+    return msgs.length > maxCount ? msgs.slice(-maxCount) : msgs
+  }
+
+  // 合并远程裁剪后的消息与本地完整历史
+  // 远程只发最近 N 条，本地保留完整历史，取并集
+  const mergeMessages = (localMsgs: string[], remoteMsgs: string[]): string[] => {
+    if (!localMsgs.length) return remoteMsgs
+    if (!remoteMsgs.length) return localMsgs
+    // 找到远程消息中第一条在本地不存在的消息
+    const lastLocal = localMsgs[localMsgs.length - 1]
+    const overlapIdx = remoteMsgs.lastIndexOf(lastLocal)
+    if (overlapIdx >= 0 && overlapIdx < remoteMsgs.length - 1) {
+      // 本地最后一条在远程中找到了，追加远程后续新增的消息
+      return [...localMsgs, ...remoteMsgs.slice(overlapIdx + 1)]
+    }
+    if (overlapIdx === remoteMsgs.length - 1) {
+      // 完全重叠，没有新消息
+      return localMsgs
+    }
+    // 没有重叠（可能本地落后太多），直接用远程的
+    return remoteMsgs
+  }
+
   const broadcastState = useCallback((gs: GameState, msgs: string[]) => {
     const peer = peerRef.current
     if (!peer) return
     peer.broadcast({
       type: 'game-state',
-      payload: { game: gs, messages: msgs },
+      payload: { game: slimGame(gs), messages: trimMessages(msgs) },
     })
   }, [])
 
@@ -322,14 +353,15 @@ export default function MonopolyGame() {
 
         case 'dice-rolled': {
           if (!peer.getIsHost()) {
-            const { dice: diceValues, playerIndex, fromTile, game: newGame, messages: newMsgs } = message.payload
+            const { dice: diceValues, playerIndex, fromTile, game: newGame, messages: remoteMsgs } = message.payload
+            const newMsgs = mergeMessages(messagesRef.current, remoteMsgs || [])
 
             // 如果上一个动画还在播放，保存到待播放队列，动画完成后补播
             if (animatingRef.current) {
-              pendingDiceRolledRef.current.push(message)
+              pendingDiceRolledRef.current.push({ ...message, payload: { ...message.payload, messages: newMsgs } })
               if (newGame) {
                 gameRef.current = newGame
-                messagesRef.current = newMsgs || []
+                messagesRef.current = newMsgs
               }
               return
             }
@@ -341,7 +373,8 @@ export default function MonopolyGame() {
 
         case 'game-state': {
           if (!peer.getIsHost()) {
-            const { game: newGame, messages: newMsgs } = message.payload
+            const { game: newGame, messages: remoteMsgs } = message.payload
+            const newMsgs = mergeMessages(messagesRef.current, remoteMsgs || [])
 
             // 动画进行中：仅缓存到ref，不打断动画（dice-rolled回调会处理状态更新）
             if (animatingRef.current) {
@@ -352,6 +385,7 @@ export default function MonopolyGame() {
 
             setGame(newGame)
             setMessages(newMsgs)
+            messagesRef.current = newMsgs
             setRolling(false)
             // 收到游戏状态时自动进入游戏画面
             if (newGame && screenRef.current !== 'game' && screenRef.current !== 'end') {
@@ -761,8 +795,8 @@ export default function MonopolyGame() {
           dice: [dice[0], dice[1]],
           playerIndex,
           fromTile: oldPos,
-          game: precomputedState,
-          messages: precomputedMsgs,
+          game: slimGame(precomputedState),
+          messages: trimMessages(precomputedMsgs),
         },
       })
     }
