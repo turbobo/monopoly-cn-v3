@@ -791,7 +791,7 @@ export default function MonopolyGame() {
                   if (skipState.gameOver) setScreen('end')
                 }
                 buyTimeoutRef.current = null
-              }, 10000)
+              }, 20000) // 20秒：需要覆盖 Guest 的动画时间(~5s) + 网络延迟(~2s) + 思考时间
             }
           }
 
