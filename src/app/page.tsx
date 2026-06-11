@@ -752,6 +752,8 @@ export default function MonopolyGame() {
       bankrupt: false,
       isAI: false,
       color: ['#ef4444', '#3b82f6', '#10b981', '#f59e0b'][i % 4],
+      cards: [],
+      freePassActive: false,
     }))
 
     const newGame: GameState = {
@@ -765,6 +767,9 @@ export default function MonopolyGame() {
       gameOver: false,
       winner: null,
       difficulty,
+      roadblocks: [],
+      priceHikes: [],
+      lastCardRound: 0,
     }
 
     setGame(newGame)

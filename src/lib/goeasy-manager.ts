@@ -12,7 +12,7 @@ import GoEasySDK from 'goeasy'
 
 // ===== 消息类型（与 PeerJS 版完全兼容） =====
 export interface PeerMessage {
-  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled' | 'ping' | 'pong' | 'sync-request'
+  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled' | 'ping' | 'pong' | 'sync-request' | 'card-action'
   payload: any
   from: string
   timestamp: number

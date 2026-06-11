@@ -26,6 +26,8 @@ export interface Player {
   isAI: boolean
   aiPersonality?: 'aggressive' | 'balanced' | 'conservative'
   color: string
+  cards: GameCard[]
+  freePassActive: boolean
 }
 
 export interface GameState {
@@ -39,6 +41,9 @@ export interface GameState {
   gameOver: boolean
   winner: number | null
   difficulty: 'easy' | 'normal' | 'hard'
+  roadblocks: Roadblock[]
+  priceHikes: { tileId: number; ownerPlayerId: number; roundsLeft: number }[]
+  lastCardRound: number
 }
 
 // ===== 棋盘数据 (28格) =====
@@ -130,14 +135,18 @@ export function createPlayer(id: number, name: string, isAI: boolean, personalit
     id, name, avatar: isAI ? (personality === 'aggressive' ? '🔥' : personality === 'conservative' ? '🛡️' : '🤖') : preset.avatar,
     money: initialMoney, position: 0, properties: [], inJail: false, jailTurns: 0,
     bankrupt: false, isAI, aiPersonality: personality, color: preset.color,
+    cards: [], freePassActive: false,
   }
 }
 
-// ===== 计算租金（含回合加成） =====
-export function calculateRent(tile: Tile, owner: Player, allPlayers: Player[], round: number = 1): number {
+// ===== 计算租金（含回合加成 + 涨价卡 + 免费卡） =====
+export function calculateRent(tile: Tile, owner: Player, allPlayers: Player[], round: number = 1, priceHikes: { tileId: number; ownerPlayerId: number }[] = [], freePassActive: boolean = false): number {
   if (tile.type === 'tax') {
     return tile.name === '个人所得税' ? 100 : 150
   }
+
+  // 免费卡生效 → 租金为 0
+  if (freePassActive) return 0
 
   let baseRent = 0
 
@@ -159,7 +168,12 @@ export function calculateRent(tile: Tile, owner: Player, allPlayers: Player[], r
 
   // 回合加成：10回合后x1.5，20回合后x2.0
   const roundMultiplier = round >= 20 ? 2.0 : round >= 10 ? 1.5 : 1.0
-  return Math.floor(baseRent * roundMultiplier)
+
+  // 涨价卡加成：租金翻倍
+  const priceHikeActive = priceHikes.some(h => h.tileId === tile.id && h.ownerPlayerId === owner.id)
+  const hikeMultiplier = priceHikeActive ? 2.0 : 1.0
+
+  return Math.floor(baseRent * roundMultiplier * hikeMultiplier)
 }
 
 // ===== 经过起点奖金（随回合递增） =====
@@ -342,7 +356,131 @@ export function aiTradeInitDecision(buyer: Player, gs: GameState): { targetId: n
   return null
 }
 
-// ===== 游戏回合推进 =====
+// ===== 道具卡系统 =====
+export type CardType = 'remote_dice' | 'roadblock' | 'swap' | 'free_pass' | 'price_hike'
+
+export interface GameCard {
+  id: string          // 唯一 ID（用于在线同步）
+  type: CardType
+  name: string
+  emoji: string
+  description: string
+}
+
+export interface Roadblock {
+  tileId: number
+  ownerPlayerId: number  // 放置者的 player.id
+}
+
+const CARD_POOL: Omit<GameCard, 'id'>[] = [
+  { type: 'remote_dice', name: '遥控骰子', emoji: '🎯', description: '指定本次掷骰点数(2-12)' },
+  { type: 'roadblock',   name: '路障卡',   emoji: '🚧', description: '放置路障，踩中者停一回合' },
+  { type: 'swap',        name: '交换卡',   emoji: '🔄', description: '与任意玩家互换位置' },
+  { type: 'free_pass',   name: '免费卡',   emoji: '🛡️', description: '下次付租金时免除费用' },
+  { type: 'price_hike',  name: '涨价卡',   emoji: '📈', description: '你的一块地皮租金翻倍(持续3回合)' },
+]
+
+export function generateCardId(): string {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+export function drawRandomCard(): GameCard {
+  const template = CARD_POOL[Math.floor(Math.random() * CARD_POOL.length)]
+  return { ...template, id: generateCardId() }
+}
+
+// 每5回合给所有未破产玩家发一张卡
+export function distributeCardsIfDue(gs: GameState): string[] {
+  const msgs: string[] = []
+  if (gs.round > 0 && gs.round % 5 === 0 && gs.round !== gs.lastCardRound) {
+    gs.lastCardRound = gs.round
+    for (const p of gs.players) {
+      if (!p.bankrupt) {
+        const card = drawRandomCard()
+        p.cards.push(card)
+        msgs.push(`🃏 ${p.name} 获得了道具卡「${card.emoji} ${card.name}」`)
+      }
+    }
+  }
+  return msgs
+}
+
+// 使用遥控骰子 → 返回指定点数
+export function useRemoteDice(total: number): [number, number] {
+  const clamped = Math.max(2, Math.min(12, total))
+  const d1 = Math.max(1, Math.min(6, Math.floor(clamped / 2)))
+  const d2 = clamped - d1
+  return [d1, d2]
+}
+
+// 使用交换卡 → 交换两个玩家位置
+export function useSwapCard(gs: GameState, userPlayerId: number, targetPlayerId: number): string {
+  const user = gs.players.find(p => p.id === userPlayerId)
+  const target = gs.players.find(p => p.id === targetPlayerId)
+  if (!user || !target || user.bankrupt || target.bankrupt) return ''
+  const tmp = user.position
+  user.position = target.position
+  target.position = tmp
+  // 移除已使用的卡
+  const cardIdx = user.cards.findIndex(c => c.type === 'swap')
+  if (cardIdx >= 0) user.cards.splice(cardIdx, 1)
+  return `🔄 ${user.name} 和 ${target.name} 互换了位置！`
+}
+
+// 使用路障卡
+export function useRoadblockCard(gs: GameState, userPlayerId: number, tileId: number): string {
+  const user = gs.players.find(p => p.id === userPlayerId)
+  if (!user || user.bankrupt) return ''
+  gs.roadblocks.push({ tileId, ownerPlayerId: userPlayerId })
+  const cardIdx = user.cards.findIndex(c => c.type === 'roadblock')
+  if (cardIdx >= 0) user.cards.splice(cardIdx, 1)
+  return `🚧 ${user.name} 在 ${BOARD[tileId].name} 放置了路障！`
+}
+
+// 使用免费卡 → 标记激活
+export function useFreePassCard(gs: GameState, userPlayerId: number): string {
+  const user = gs.players.find(p => p.id === userPlayerId)
+  if (!user || user.bankrupt) return ''
+  user.freePassActive = true
+  const cardIdx = user.cards.findIndex(c => c.type === 'free_pass')
+  if (cardIdx >= 0) user.cards.splice(cardIdx, 1)
+  return `🛡️ ${user.name} 激活了免费卡，下次租金免除！`
+}
+
+// 使用涨价卡
+export function usePriceHikeCard(gs: GameState, userPlayerId: number, tileId: number): string {
+  const user = gs.players.find(p => p.id === userPlayerId)
+  if (!user || user.bankrupt) return ''
+  if (!user.properties.includes(tileId)) return ''
+  gs.priceHikes.push({ tileId, ownerPlayerId: userPlayerId, roundsLeft: 3 })
+  const cardIdx = user.cards.findIndex(c => c.type === 'price_hike')
+  if (cardIdx >= 0) user.cards.splice(cardIdx, 1)
+  return `📈 ${user.name} 对 ${BOARD[tileId].name} 使用了涨价卡，租金翻倍3回合！`
+}
+
+// 检查路障（在 movePlayer 后调用）
+export function checkRoadblock(gs: GameState): string | null {
+  const player = gs.players[gs.currentPlayer]
+  const blockIdx = gs.roadblocks.findIndex(r => r.tileId === player.position && r.ownerPlayerId !== player.id)
+  if (blockIdx >= 0) {
+    gs.roadblocks.splice(blockIdx, 1)
+    return `🚧 ${player.name} 踩中了路障，本回合被拦截！`
+  }
+  return null
+}
+
+// 涨价卡回合递减（在 nextPlayer 时调用）
+export function tickPriceHikes(gs: GameState): string[] {
+  const msgs: string[] = []
+  gs.priceHikes = gs.priceHikes.map(h => ({ ...h, roundsLeft: h.roundsLeft - 1 })).filter(h => {
+    if (h.roundsLeft <= 0) {
+      msgs.push(`📉 ${BOARD[h.tileId].name} 的涨价效果结束了`)
+      return false
+    }
+    return true
+  })
+  return msgs
+}
 export function executeTurn(gs: GameState, preRolledDice?: [number, number]): string[] {
   const messages: string[] = []
   const player = gs.players[gs.currentPlayer]
@@ -402,6 +540,15 @@ export function executeTurn(gs: GameState, preRolledDice?: [number, number]): st
   const bonus = movePlayer(player, total, gs.round)
   if (bonus > 0) messages.push(`💰 ${player.name} 经过起点，获得 ¥${bonus}`)
 
+  // 检查路障
+  const roadblockMsg = checkRoadblock(gs)
+  if (roadblockMsg) {
+    messages.push(roadblockMsg)
+    // 踩中路障：跳过本回合，直接到下一个玩家
+    nextPlayer(gs)
+    return messages
+  }
+
   const tile = BOARD[player.position]
   messages.push(`📍 ${player.name} 到达 ${tile.emoji} ${tile.name}`)
 
@@ -452,8 +599,14 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
       // 检查是否有人拥有
       const owner = gs.players.find(p => p.properties.includes(tile.id))
       if (owner && owner.id !== player.id && !owner.bankrupt) {
-        const rent = calculateRent(tile, owner, gs.players, gs.round)
-        if (player.money >= rent) {
+        // 检查免费卡是否生效
+        const freePassActive = player.freePassActive || false
+        const rent = calculateRent(tile, owner, gs.players, gs.round, gs.priceHikes, freePassActive)
+        if (freePassActive) {
+          // 使用免费卡，免除租金
+          player.freePassActive = false
+          messages.push(`🛡️ ${player.name} 使用了免费卡，免除了 ${tile.name} 的租金！`)
+        } else if (player.money >= rent) {
           // 正常支付
           player.money -= rent
           owner.money += rent
@@ -560,7 +713,19 @@ export function nextPlayer(gs: GameState) {
     if (prev === len - 1 && next === 0) wrappedAround = true
     safety++
   }
-  if (wrappedAround) gs.round++
+  if (wrappedAround) {
+    gs.round++
+    // 每回合结束时递减涨价卡剩余回合
+    const hikeMsgs = tickPriceHikes(gs)
+    if (hikeMsgs.length > 0) {
+      gs.log.push(...hikeMsgs)
+    }
+    // 每5回合发放道具卡
+    const cardMsgs = distributeCardsIfDue(gs)
+    if (cardMsgs.length > 0) {
+      gs.log.push(...cardMsgs)
+    }
+  }
   gs.currentPlayer = next
   gs.phase = 'roll'
 
@@ -596,5 +761,8 @@ export function createGame(mode: 'ai' | 'local', playerCount: number, initialMon
     players, currentPlayer: 0, round: 1, maxRounds: 30,
     dice: [1, 1], phase: 'roll', log: ['🎲 游戏开始！'], gameOver: false, winner: null,
     difficulty,
+    roadblocks: [],
+    priceHikes: [],
+    lastCardRound: 0,
   }
 }
