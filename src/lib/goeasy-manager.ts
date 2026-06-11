@@ -12,7 +12,7 @@ import GoEasySDK from 'goeasy'
 
 // ===== 消息类型（与 PeerJS 版完全兼容） =====
 export interface PeerMessage {
-  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled' | 'ping' | 'pong'
+  type: 'game-state' | 'player-action' | 'player-join' | 'player-leave' | 'room-info' | 'chat' | 'error' | 'dice-rolled' | 'ping' | 'pong' | 'sync-request'
   payload: any
   from: string
   timestamp: number
@@ -24,8 +24,12 @@ export interface RoomInfo {
   players: { id: string; name: string; isHost: boolean }[]
 }
 
+// 连接状态（用于通知 UI 层）
+export type ConnectionStatus = 'reconnecting' | 'connected' | 'failed'
+
 type MessageHandler = (message: PeerMessage, peerId: string) => void
 type ConnectionHandler = (peerId: string) => void
+type ConnectionStatusHandler = (status: ConnectionStatus, message: string) => void
 
 // GoEasy SDK 类型（简化版）
 type GoEasySDK = {
@@ -68,6 +72,7 @@ export class GoEasyManager {
   private messageHandlers: MessageHandler[] = []
   private connectionHandlers: ConnectionHandler[] = []
   private disconnectionHandlers: ConnectionHandler[] = []
+  private connectionStatusHandlers: ConnectionStatusHandler[] = []
   private isHost: boolean = false
   private roomId: string = ''
   private playerName: string = ''
@@ -80,6 +85,8 @@ export class GoEasyManager {
   private heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
   private connectionCheckInterval: ReturnType<typeof setInterval> | null = null
   private reconnecting: boolean = false
+  private reconnectAttempts: number = 0
+  private static readonly MAX_RECONNECT_ATTEMPTS = 5
   private publishQueue: string[] = []
   private static sdkInitialized: boolean = false
 
@@ -275,11 +282,33 @@ export class GoEasyManager {
     })
   }
 
+  // 通知 UI 层连接状态变化
+  private notifyConnectionStatus(status: ConnectionStatus, message: string) {
+    this.connectionStatusHandlers.forEach(h => {
+      try { h(status, message) } catch (e) { console.warn('[GoEasyManager] status handler error:', e) }
+    })
+  }
+
   // 自动重连
   private tryReconnect() {
     if (this.destroyed || this.reconnecting || !this.goeasy) return
     this.reconnecting = true
-    console.log('[GoEasyManager] Attempting reconnect...')
+    this.reconnectAttempts += 1
+    console.log('[GoEasyManager] Attempting reconnect... attempt', this.reconnectAttempts, '/', GoEasyManager.MAX_RECONNECT_ATTEMPTS)
+
+    // 通知 UI：连接中断，正在重连
+    this.notifyConnectionStatus(
+      'reconnecting',
+      `连接中断，正在重连... (${this.reconnectAttempts}/${GoEasyManager.MAX_RECONNECT_ATTEMPTS})`
+    )
+
+    // 超过最大重试次数，停止重连并通知 UI 最终失败
+    if (this.reconnectAttempts > GoEasyManager.MAX_RECONNECT_ATTEMPTS) {
+      console.error('[GoEasyManager] Max reconnect attempts reached, giving up')
+      this.reconnecting = false
+      this.notifyConnectionStatus('failed', '连接失败，请刷新页面')
+      return
+    }
 
     // 重连：disconnect → connect → re-subscribe
     try { this.goeasy.disconnect({ onFailed: () => {} }) } catch {}
@@ -312,21 +341,37 @@ export class GoEasyManager {
                     onFailed: () => {},
                   })
                 }
+                // 重连成功：重置计数、通知 UI
+                this.reconnectAttempts = 0
                 this.reconnecting = false
+                this.notifyConnectionStatus('connected', '已重新连接')
+                // Guest 端：请求最新游戏状态以保证状态一致
+                if (!this.isHost) {
+                  this.publishMessage({
+                    type: 'sync-request',
+                    payload: null,
+                    from: this.clientId,
+                    timestamp: Date.now(),
+                  })
+                }
               },
               onFailed: () => {
                 console.error('[GoEasyManager] Re-subscribe failed')
                 this.reconnecting = false
+                // 重新订阅失败：稍后再试
+                setTimeout(() => { if (!this.destroyed) this.tryReconnect() }, 5000)
               },
             })
           } else {
+            this.reconnectAttempts = 0
             this.reconnecting = false
+            this.notifyConnectionStatus('connected', '已重新连接')
           }
         },
         onFailed: (err: any) => {
           console.error('[GoEasyManager] Reconnect failed:', JSON.stringify(err))
           this.reconnecting = false
-          // 5秒后再试一次
+          // 5秒后再试一次（受 MAX_RECONNECT_ATTEMPTS 限制）
           setTimeout(() => { if (!this.destroyed) this.tryReconnect() }, 5000)
         },
       })
@@ -368,6 +413,12 @@ export class GoEasyManager {
   onDisconnection(handler: ConnectionHandler): () => void {
     this.disconnectionHandlers.push(handler)
     return () => { this.disconnectionHandlers = this.disconnectionHandlers.filter(h => h !== handler) }
+  }
+
+  // 监听底层连接状态变化（reconnecting / connected / failed），用于 UI 层提示
+  onConnectionStatusChange(handler: ConnectionStatusHandler): () => void {
+    this.connectionStatusHandlers.push(handler)
+    return () => { this.connectionStatusHandlers = this.connectionStatusHandlers.filter(h => h !== handler) }
   }
 
   getConnectionCount(): number {
@@ -483,6 +534,7 @@ export class GoEasyManager {
     this.messageHandlers = []
     this.connectionHandlers = []
     this.disconnectionHandlers = []
+    this.connectionStatusHandlers = []
     this.initialized = false
     console.log('[GoEasyManager] Destroyed')
   }

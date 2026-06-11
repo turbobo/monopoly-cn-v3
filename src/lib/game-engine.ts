@@ -225,22 +225,46 @@ export function checkBankrupt(player: Player): { bankrupt: boolean; soldTiles: n
 }
 
 // ===== AI决策 =====
-export function aiDecision(player: Player, tile: Tile, difficulty: 'easy' | 'normal' | 'hard' = 'normal'): boolean {
+export function aiDecision(player: Player, tile: Tile, difficulty: 'easy' | 'normal' | 'hard' = 'normal', gs?: GameState): boolean {
   if (!player.isAI) return false
   if (tile.type !== 'property' && tile.type !== 'railroad' && tile.type !== 'utility') return false
 
   const personality = player.aiPersonality || 'balanced'
 
   // 难度系数：简单=更保守，困难=更激进
-  const diffMultiplier = difficulty === 'easy' ? 1.5 : difficulty === 'hard' ? 0.7 : 1.0
+  let diffMultiplier = difficulty === 'easy' ? 1.5 : difficulty === 'hard' ? 0.7 : 1.0
+
+  // 同色组进度加成：已拥有同色组中越多，越倾向于补齐
+  let groupBonus = 1.0
+  if (tile.type === 'property') {
+    const group = COLOR_GROUPS[tile.color]
+    if (group && group.length > 0) {
+      const owned = group.filter(id => player.properties.includes(id)).length
+      const progress = owned / group.length
+      if (progress >= 0.5) {
+        // 已有 >=50%，大幅提高购买意愿（系数越小越容易买入）
+        groupBonus = progress >= 1 ? 0.5 : 0.6
+      } else if (owned >= 1) {
+        groupBonus = 0.85
+      }
+    }
+  }
+
+  // 回合数加成：游戏进入中后期，AI 更激进
+  const round = gs?.round ?? 1
+  const roundBonus = round > 20 ? 0.8 : round > 10 ? 0.9 : 1.0
+
+  diffMultiplier = diffMultiplier * groupBonus * roundBonus
 
   if (personality === 'aggressive') {
     // 激进型：只要买得起就买
     return player.money >= tile.price * 0.8 * diffMultiplier
   }
   if (personality === 'conservative') {
-    // 保守型：只买便宜且有余钱的
-    return player.money >= tile.price * 1.8 * diffMultiplier && tile.price <= 200
+    // 保守型：只买便宜且有余钱的；但补齐同色组时放宽价格上限
+    const owned = COLOR_GROUPS[tile.color]?.filter(id => player.properties.includes(id)).length || 0
+    const priceCap = owned >= 1 ? 350 : 200
+    return player.money >= tile.price * 1.8 * diffMultiplier && tile.price <= priceCap
   }
   // 平衡型：看性价比 + 保留安全资金
   if (tile.price > 300 && player.money < tile.price * 2 * diffMultiplier) return false
@@ -332,7 +356,15 @@ export function executeTurn(gs: GameState, preRolledDice?: [number, number]): st
   // 监狱逻辑
   if (player.inJail) {
     player.jailTurns++
-    if (player.jailTurns >= 3) {
+    // AI 出狱策略：根据性格决定是否主动支付保释金
+    let aiPayBail = false
+    if (player.isAI && player.jailTurns < 3 && player.money >= 50) {
+      const jp = player.aiPersonality || 'balanced'
+      if (jp === 'aggressive' && player.jailTurns >= 1) aiPayBail = true
+      else if (jp === 'balanced' && player.jailTurns >= 2) aiPayBail = true
+      // conservative：等到第3回合强制出狱
+    }
+    if (player.jailTurns >= 3 || aiPayBail) {
       player.inJail = false
       player.jailTurns = 0
       player.money -= 50 // 保释金
@@ -404,6 +436,14 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
     case 'chance': {
       const chanceMsg = drawChance(gs)
       messages.push(`❓ ${player.name} ${chanceMsg}`)
+      // 机会卡可能扣钱导致破产，立即检查
+      const chanceBankrupt = checkBankrupt(player)
+      for (const tileId of chanceBankrupt.soldTiles) {
+        messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
+      }
+      if (chanceBankrupt.bankrupt) {
+        messages.push(`💀 ${player.name} 破产了！`)
+      }
       break
     }
     case 'property':
@@ -413,13 +453,35 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
       const owner = gs.players.find(p => p.properties.includes(tile.id))
       if (owner && owner.id !== player.id && !owner.bankrupt) {
         const rent = calculateRent(tile, owner, gs.players, gs.round)
-        player.money -= rent
-        owner.money += rent
-        messages.push(`💰 ${player.name} 向 ${owner.name} 支付租金 ¥${rent}`)
+        if (player.money >= rent) {
+          // 正常支付
+          player.money -= rent
+          owner.money += rent
+          messages.push(`💰 ${player.name} 向 ${owner.name} 支付租金 ¥${rent}`)
+        } else {
+          // 资金不足：先扣减让 checkBankrupt 触发卖地流程
+          player.money -= rent
+          const rentBankrupt = checkBankrupt(player)
+          for (const tileId of rentBankrupt.soldTiles) {
+            messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
+          }
+          if (!rentBankrupt.bankrupt) {
+            // 卖地后足以支付
+            owner.money += rent
+            messages.push(`💰 ${player.name} 向 ${owner.name} 支付租金 ¥${rent}`)
+          } else {
+            // 卖光全部地仍不足，将可支付部分全部给 owner
+            const paid = Math.max(0, rent + player.money) // player.money 此时 < 0，差额即未支付部分
+            owner.money += paid
+            player.money = 0
+            messages.push(`💸 ${player.name} 无力支付全额租金，将剩余 ¥${paid} 支付给 ${owner.name}`)
+            messages.push(`💀 ${player.name} 破产了！`)
+          }
+        }
       } else if (!owner) {
         // AI或玩家决定是否购买
         if (player.isAI) {
-          if (aiDecision(player, tile, gs.difficulty)) {
+          if (aiDecision(player, tile, gs.difficulty, gs)) {
             buyProperty(player, tile.id)
             messages.push(`🏠 ${player.name} 购买了 ${tile.name}（¥${tile.price}）`)
           } else {
@@ -487,13 +549,18 @@ export function finalizeTurn(gs: GameState): string[] {
 }
 
 export function nextPlayer(gs: GameState) {
-  let next = (gs.currentPlayer + 1) % gs.players.length
+  const len = gs.players.length
+  let next = (gs.currentPlayer + 1) % len
+  // 第一步即从最后一位回绕到第一位时，标记回绕
+  let wrappedAround = gs.currentPlayer === len - 1
   let safety = 0
-  while (gs.players[next].bankrupt && safety < gs.players.length) {
-    next = (next + 1) % gs.players.length
+  while (gs.players[next].bankrupt && safety < len) {
+    const prev = next
+    next = (next + 1) % len
+    if (prev === len - 1 && next === 0) wrappedAround = true
     safety++
   }
-  if (next <= gs.currentPlayer) gs.round++
+  if (wrappedAround) gs.round++
   gs.currentPlayer = next
   gs.phase = 'roll'
 

@@ -36,7 +36,7 @@ export default function MonopolyGame() {
   const screenRef = useRef<Screen>('menu')
   const animatingRef = useRef(false)
   const roomValidatedRef = useRef(false)
-  const pendingDiceRolledRef = useRef<PeerMessage | null>(null)
+  const pendingDiceRolledRef = useRef<PeerMessage[]>([])
   // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
   const [mode, setMode] = useState<GameMode>('local')
@@ -67,6 +67,7 @@ export default function MonopolyGame() {
   const [connecting, setConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState('')
   const [isMyTurn, setIsMyTurn] = useState(false)
+  const [gameStarting, setGameStarting] = useState(false)
 
   // Sync refs with state
   useEffect(() => { gameRef.current = game }, [game])
@@ -227,9 +228,8 @@ export default function MonopolyGame() {
                 if (lastMsg.includes('破产')) playBankruptSound()
 
                 // 检查是否有待播放的 dice-rolled
-                const pending = pendingDiceRolledRef.current
-                if (pending) {
-                  pendingDiceRolledRef.current = null
+                if (pendingDiceRolledRef.current.length > 0) {
+                  const pending = pendingDiceRolledRef.current.shift()!
                   const p = pending.payload
                   // 用更快的速度补播（3x 骰子，2.5x 移动）
                   setTimeout(() => {
@@ -326,7 +326,7 @@ export default function MonopolyGame() {
 
             // 如果上一个动画还在播放，保存到待播放队列，动画完成后补播
             if (animatingRef.current) {
-              pendingDiceRolledRef.current = message
+              pendingDiceRolledRef.current.push(message)
               if (newGame) {
                 gameRef.current = newGame
                 messagesRef.current = newMsgs || []
@@ -484,6 +484,8 @@ export default function MonopolyGame() {
       const newState: GameState = JSON.parse(JSON.stringify(gs))
       const player = newState.players[playerIdx]
       player.bankrupt = true
+      // 金钱可能已为负，先归零再变卖
+      player.money = Math.max(0, player.money)
       // 变卖所有地皮
       for (const tileId of player.properties) {
         player.money += Math.floor(BOARD[tileId].price * 0.6)
@@ -658,10 +660,12 @@ export default function MonopolyGame() {
   const startOnlineGame = () => {
     const peer = peerRef.current
     if (!peer || !peer.getIsHost()) return
+    if (gameStarting) return // 防止重复点击
     if (onlinePlayers.length < 2) {
       setConnectionError('至少需要2名玩家才能开始游戏')
       return
     }
+    setGameStarting(true)
 
     const players: Player[] = onlinePlayers.map((p, i) => ({
       id: i,
@@ -803,9 +807,15 @@ export default function MonopolyGame() {
               setBuyPrompt({ tile: BOARD[updatedPlayer.position] })
             } else if (updatedPlayer && !updatedPlayer.bankrupt) {
               if (buyTimeoutRef.current) clearTimeout(buyTimeoutRef.current)
+              // 保存超时设置时的玩家索引与阶段，防止其他消息修改后误跳
+              const expectedPlayer = precomputedState.currentPlayer
               buyTimeoutRef.current = setTimeout(() => {
                 const latestGs = gameRef.current
-                if (latestGs && latestGs.phase === 'action') {
+                if (
+                  latestGs &&
+                  latestGs.currentPlayer === expectedPlayer &&
+                  latestGs.phase === 'action'
+                ) {
                   const skipState: GameState = JSON.parse(JSON.stringify(latestGs))
                   const skipPlayer = skipState.players[skipState.currentPlayer]
                   const skipTile = BOARD[skipPlayer.position]
@@ -1043,7 +1053,8 @@ export default function MonopolyGame() {
       buyTimeoutRef.current = null
     }
     animatingRef.current = false
-    pendingDiceRolledRef.current = null
+    pendingDiceRolledRef.current = []
+    setGameStarting(false)
     setScreen('setup')
     setGame(null)
     setMessages([])
@@ -1059,7 +1070,8 @@ export default function MonopolyGame() {
       buyTimeoutRef.current = null
     }
     animatingRef.current = false
-    pendingDiceRolledRef.current = null
+    pendingDiceRolledRef.current = []
+    setGameStarting(false)
     const peerToDestroy = peerRef.current
     if (peerToDestroy) {
       peerToDestroy.broadcast({
@@ -1363,9 +1375,9 @@ export default function MonopolyGame() {
                 </button>
                 {onlineRole === 'host' && (
                   <button onClick={startOnlineGame}
-                    disabled={onlinePlayers.length < 2}
+                    disabled={onlinePlayers.length < 2 || gameStarting}
                     className="flex-[2] py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all disabled:opacity-50">
-                    开始游戏 ({onlinePlayers.length}人)
+                    {gameStarting ? '启动中...' : `开始游戏 (${onlinePlayers.length}人)`}
                   </button>
                 )}
                 {onlineRole === 'guest' && (
@@ -1485,16 +1497,31 @@ export default function MonopolyGame() {
             {game.players.map(p => {
               const isCurrent = p.id === currentPlayer?.id
               const propValue = p.properties.reduce((sum, id) => sum + BOARD[id].price, 0)
+              const displayMoney = Math.max(0, p.money)
+              if (p.bankrupt) {
+                return (
+                  <div key={p.id}
+                    className="p-2 rounded-xl flex items-center gap-2 opacity-50"
+                    style={{ background: 'rgba(255,255,255,0.03)' }}>
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-base grayscale"
+                      style={{ background: p.color + '22', border: `1px solid ${p.color}66` }}>
+                      {p.avatar}
+                    </div>
+                    <span className="text-sm text-gray-400 font-medium flex-1 truncate">{p.name}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold whitespace-nowrap">已破产</span>
+                  </div>
+                )
+              }
               return (
                 <div key={p.id}
-                  className={`p-2.5 rounded-xl transition-all relative ${p.bankrupt ? 'opacity-30' : ''}`}
+                  className="p-2.5 rounded-xl transition-all relative"
                   style={{
                     background: isCurrent ? p.color + '18' : 'rgba(255,255,255,0.03)',
                     borderWidth: isCurrent ? 1 : 0,
                     borderColor: isCurrent ? p.color + '44' : 'transparent',
                     boxShadow: isCurrent ? `0 0 0 2px ${p.color}33, 0 0 12px ${p.color}15` : 'none',
                   }}>
-                  {isCurrent && !p.bankrupt && (
+                  {isCurrent && (
                     <div className="absolute -left-1 top-1/2 -translate-y-1/2 flex items-center">
                       <div className="animate-pulse">
                         <svg width="14" height="20" viewBox="0 0 14 20" fill="none">
@@ -1508,14 +1535,14 @@ export default function MonopolyGame() {
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg relative"
                         style={{ background: p.color + '33', border: `1.5px solid ${p.color}` }}>
                         {p.avatar}
-                        {isCurrent && !p.bankrupt && (
+                        {isCurrent && (
                           <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-400 border border-white animate-pulse" />
                         )}
                       </div>
                       <div>
                         <div className="text-sm text-gray-200 font-medium flex items-center gap-1.5">
                           {p.name}
-                          {isCurrent && !p.bankrupt && (
+                          {isCurrent && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
                               style={{ background: p.color + '33', color: p.color }}>
                               操作中
@@ -1531,13 +1558,13 @@ export default function MonopolyGame() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-bold" style={{ color: p.color }}>💰 ¥{p.money}</div>
+                      <div className="text-sm font-bold" style={{ color: p.color }}>💰 ¥{displayMoney}</div>
                       <div className="text-xs text-amber-400 font-medium">🏠 ¥{propValue}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
                     <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden flex">
-                      <div className="h-full rounded-l-full transition-all duration-500" style={{ width: `${totalWealth(p) > 0 ? (p.money / totalWealth(p)) * 100 : 100}%`, background: p.color }} />
+                      <div className="h-full rounded-l-full transition-all duration-500" style={{ width: `${totalWealth(p) > 0 ? (displayMoney / totalWealth(p)) * 100 : 100}%`, background: p.color }} />
                       <div className="h-full rounded-r-full transition-all duration-500" style={{ width: `${totalWealth(p) > 0 ? (propValue / totalWealth(p)) * 100 : 0}%`, background: '#f59e0b' }} />
                     </div>
                     <span className="text-[10px] text-gray-500 whitespace-nowrap">共¥{totalWealth(p)}</span>

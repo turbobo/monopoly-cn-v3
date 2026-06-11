@@ -3,11 +3,18 @@
 let audioCtx: AudioContext | null = null
 let muted = false
 
-function getCtx(): AudioContext {
+function getCtx(): AudioContext | null {
   if (!audioCtx) {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    try {
+      audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    } catch (e) {
+      console.warn('Web Audio API not supported:', e)
+      return null
+    }
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume()
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {})
+  }
   return audioCtx
 }
 
@@ -18,6 +25,7 @@ export function isMuted() { return muted }
 export function playDiceRoll() {
   if (muted) return
   const ctx = getCtx()
+  if (!ctx) return
   const now = ctx.currentTime
   const hits = 8
 
@@ -55,6 +63,7 @@ export function playDiceRoll() {
 export function playDiceLand() {
   if (muted) return
   const ctx = getCtx()
+  if (!ctx) return
   const now = ctx.currentTime
 
   // 低频撞击
@@ -98,6 +107,7 @@ export function playDiceLand() {
 export function playStepSound() {
   if (muted) return
   const ctx = getCtx()
+  if (!ctx) return
   const now = ctx.currentTime
 
   const osc = ctx.createOscillator()
@@ -118,6 +128,7 @@ export function playStepSound() {
 export function playBuySound() {
   if (muted) return
   const ctx = getCtx()
+  if (!ctx) return
   const now = ctx.currentTime
 
   const notes = [523, 659, 784] // C5, E5, G5
@@ -139,6 +150,7 @@ export function playBuySound() {
 export function playPaySound() {
   if (muted) return
   const ctx = getCtx()
+  if (!ctx) return
   const now = ctx.currentTime
 
   const osc = ctx.createOscillator()
@@ -159,6 +171,7 @@ export function playPaySound() {
 export function playBankruptSound() {
   if (muted) return
   const ctx = getCtx()
+  if (!ctx) return
   const now = ctx.currentTime
 
   for (let i = 0; i < 3; i++) {
