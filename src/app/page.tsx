@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { BoardRenderer } from '@/lib/board-renderer'
 import {
-  GameState, BOARD, BOARD_SIZE, Player,
+  GameState, BOARD, BOARD_SIZE, Player, GameCard, CardType,
   createGame, executeTurn, buyProperty, totalWealth,
-  rollDice, finalizeTurn,
+  rollDice, finalizeTurn, useRemoteDice, useSwapCard, useRoadblockCard,
+  useFreePassCard, usePriceHikeCard,
 } from '@/lib/game-engine'
 import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, setMuted } from '@/lib/sound'
 import { GoEasyManager, PeerMessage } from '@/lib/goeasy-manager'
+import { slimGame, trimMessages, mergeMessages } from '@/lib/online-utils'
 
 type Screen = 'menu' | 'setup' | 'lobby' | 'game' | 'end'
 type GameMode = 'ai' | 'local' | 'online'
@@ -37,7 +39,7 @@ export default function MonopolyGame() {
   const animatingRef = useRef(false)
   const roomValidatedRef = useRef(false)
   const pendingDiceRolledRef = useRef<PeerMessage[]>([])
-  // 游戏状态
+  const forcedDiceRef = useRef<[number, number] | null>(null)  // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
   const [mode, setMode] = useState<GameMode>('local')
   const [playerCount, setPlayerCount] = useState(2)
@@ -51,6 +53,8 @@ export default function MonopolyGame() {
   const [paused, setPaused] = useState(false)
   const [copied, setCopied] = useState(false)
   const [muted, setMutedState] = useState(false)
+  const [selectedCard, setSelectedCard] = useState<GameCard | null>(null)
+  const [showCardPanel, setShowCardPanel] = useState(false)
 
   // 在线模式状态
   const [onlineRole, setOnlineRole] = useState<OnlineRole>(null)
@@ -160,37 +164,6 @@ export default function MonopolyGame() {
   }, [game, mode, playerName])
 
   // ===== 在线模式：广播游戏状态 =====
-  // 精简游戏状态用于网络传输（去掉冗余的 log 字段）
-  const slimGame = (gs: GameState): GameState => {
-    const copy = { ...gs, log: [] as string[] }
-    return copy
-  }
-
-  // 裁剪消息数组，只保留最近 N 条，防止 GoEasy 消息超长
-  const trimMessages = (msgs: string[], maxCount = 20): string[] => {
-    return msgs.length > maxCount ? msgs.slice(-maxCount) : msgs
-  }
-
-  // 合并远程裁剪后的消息与本地完整历史
-  // 远程只发最近 N 条，本地保留完整历史，取并集
-  const mergeMessages = (localMsgs: string[], remoteMsgs: string[]): string[] => {
-    if (!localMsgs.length) return remoteMsgs
-    if (!remoteMsgs.length) return localMsgs
-    // 找到远程消息中第一条在本地不存在的消息
-    const lastLocal = localMsgs[localMsgs.length - 1]
-    const overlapIdx = remoteMsgs.lastIndexOf(lastLocal)
-    if (overlapIdx >= 0 && overlapIdx < remoteMsgs.length - 1) {
-      // 本地最后一条在远程中找到了，追加远程后续新增的消息
-      return [...localMsgs, ...remoteMsgs.slice(overlapIdx + 1)]
-    }
-    if (overlapIdx === remoteMsgs.length - 1) {
-      // 完全重叠，没有新消息
-      return localMsgs
-    }
-    // 没有重叠（可能本地落后太多），直接用远程的
-    return remoteMsgs
-  }
-
   const broadcastState = useCallback((gs: GameState, msgs: string[]) => {
     const peer = peerRef.current
     if (!peer) return
@@ -462,6 +435,72 @@ export default function MonopolyGame() {
               broadcastState(newState, newMsgs)
 
               if (newState.gameOver) setScreen('end')
+            }
+          }
+          break
+        }
+
+        case 'card-action': {
+          if (peer.getIsHost()) {
+            const gs = gameRef.current
+            if (!gs) break
+            const { cardType, cardId, playerName: actorName, target } = message.payload
+            const actorIdx = gs.players.findIndex(p => p.name === actorName)
+            if (actorIdx !== gs.currentPlayer) break // 必须是当前回合的玩家才能用卡
+            const actor = gs.players[actorIdx]
+            if (!actor || actor.bankrupt) break
+
+            const newState: GameState = JSON.parse(JSON.stringify(gs))
+            const player = newState.players[actorIdx]
+            const newMsgs = [...messagesRef.current]
+            let msg = ''
+            let autoRoll = false
+
+            switch (cardType) {
+              case 'remote_dice':
+                if (target?.diceTotal && gs.phase === 'roll') {
+                  const [d1, d2] = useRemoteDice(target.diceTotal)
+                  msg = `🎯 ${player.name} 使用遥控骰子，指定点数 ${d1}+${d2}=${d1+d2}`
+                  const ci = player.cards.findIndex((c: GameCard) => c.id === cardId)
+                  if (ci >= 0) player.cards.splice(ci, 1)
+                  // 设置强制骰子并自动掷骰
+                  forcedDiceRef.current = [d1, d2]
+                  autoRoll = true
+                }
+                break
+              case 'swap':
+                if (target?.playerIdx !== undefined && gs.phase === 'roll') {
+                  msg = useSwapCard(newState, player.id, newState.players[target.playerIdx].id)
+                }
+                break
+              case 'roadblock':
+                if (target?.tileId !== undefined && gs.phase === 'roll') {
+                  msg = useRoadblockCard(newState, player.id, target.tileId)
+                }
+                break
+              case 'free_pass':
+                if (gs.phase === 'roll') {
+                  msg = useFreePassCard(newState, player.id)
+                }
+                break
+              case 'price_hike':
+                if (target?.tileId !== undefined && gs.phase === 'roll') {
+                  msg = usePriceHikeCard(newState, player.id, target.tileId)
+                }
+                break
+            }
+
+            if (msg) {
+              newMsgs.push(msg)
+              setMessages(newMsgs)
+              setGame(newState)
+              gameRef.current = newState
+              broadcastState(newState, newMsgs)
+
+              // 遥控骰子：延迟 500ms 后自动执行掷骰
+              if (autoRoll) {
+                setTimeout(() => executeHostRollRef.current(), 500)
+              }
             }
           }
           break
@@ -770,7 +809,8 @@ export default function MonopolyGame() {
     setRolling(true)
     setBuyPrompt(null)
 
-    const dice = rollDice()
+    const dice = forcedDiceRef.current || rollDice()
+    forcedDiceRef.current = null  // 使用后清除
     playDiceRoll()
 
     const oldPos = hostCurrentPlayer.position
@@ -916,7 +956,8 @@ export default function MonopolyGame() {
     // Local/AI mode: execute locally
     setRolling(true)
     setBuyPrompt(null)
-    const dice = rollDice()
+    const dice = forcedDiceRef.current || rollDice()
+    forcedDiceRef.current = null  // 使用后清除
     playDiceRoll()
 
     const oldPos = currentPlayer.position
@@ -961,6 +1002,9 @@ export default function MonopolyGame() {
       )
     })
   }, [game, rolling, paused, currentPlayer, mode, onlineRole, roomId, playerName, isMyTurn])
+
+  const handleLocalRollRef = useRef(handleRoll)
+  useEffect(() => { handleLocalRollRef.current = handleRoll }, [handleRoll])
 
   // ===== 购买/跳过 =====
   const handleBuy = useCallback((buy: boolean) => {
@@ -1026,6 +1070,94 @@ export default function MonopolyGame() {
       broadcastState(newState, newMsgs)
     } else if (!newState.gameOver) {
       setTimeout(() => processAITurns(newState, []), 400)
+    }
+  }, [mode, onlineRole, roomId, playerName, broadcastState])
+
+  // ===== 道具卡使用 =====
+  const handleUseCard = useCallback((card: GameCard, target?: { playerIdx?: number; tileId?: number; diceTotal?: number }) => {
+    const latestGame = gameRef.current
+    if (!latestGame) return
+    const currentPlayerObj = latestGame.players[latestGame.currentPlayer]
+    if (!currentPlayerObj || currentPlayerObj.bankrupt) return
+
+    // Online guest: send card action to host
+    if (mode === 'online' && onlineRole === 'guest') {
+      const peer = peerRef.current
+      if (peer) {
+        peer.sendToPeer(roomId, {
+          type: 'card-action',
+          payload: { cardType: card.type, cardId: card.id, playerName, target },
+          from: peer.getClientId(),
+          timestamp: Date.now(),
+        })
+      }
+      setSelectedCard(null)
+      setShowCardPanel(false)
+      return
+    }
+
+    const newState: GameState = JSON.parse(JSON.stringify(latestGame))
+    const player = newState.players[newState.currentPlayer]
+    const newMsgs = [...messagesRef.current]
+    let msg = ''
+    let autoRoll = false
+
+    switch (card.type) {
+      case 'remote_dice':
+        if (target?.diceTotal) {
+          const [d1, d2] = useRemoteDice(target.diceTotal)
+          msg = `🎯 ${player.name} 使用遥控骰子，指定点数 ${d1}+${d2}=${d1+d2}`
+          const cardIdx = player.cards.findIndex(c => c.id === card.id)
+          if (cardIdx >= 0) player.cards.splice(cardIdx, 1)
+          // 设置强制骰子，后续掷骰时使用此值
+          forcedDiceRef.current = [d1, d2]
+          autoRoll = true
+        }
+        break
+      case 'swap':
+        if (target?.playerIdx !== undefined) {
+          msg = useSwapCard(newState, player.id, newState.players[target.playerIdx].id)
+        }
+        break
+      case 'roadblock':
+        if (target?.tileId !== undefined) {
+          msg = useRoadblockCard(newState, player.id, target.tileId)
+        }
+        break
+      case 'free_pass':
+        msg = useFreePassCard(newState, player.id)
+        break
+      case 'price_hike':
+        if (target?.tileId !== undefined) {
+          msg = usePriceHikeCard(newState, player.id, target.tileId)
+        }
+        break
+    }
+
+    if (msg) {
+      newMsgs.push(msg)
+      setMessages(newMsgs)
+      setGame(newState)
+      gameRef.current = newState
+      if (mode === 'online' && onlineRole === 'host') {
+        broadcastState(newState, newMsgs)
+      }
+    }
+
+    setSelectedCard(null)
+    setShowCardPanel(false)
+
+    // 遥控骰子：延迟后自动执行掷骰
+    if (autoRoll) {
+      const delay = mode === 'online' ? 500 : 300
+      setTimeout(() => {
+        if (mode === 'online' && onlineRole === 'host') {
+          executeHostRollRef.current()
+        } else {
+          // 本地/AI模式：直接执行掷骰（使用 forcedDiceRef）
+          handleLocalRollRef.current()
+        }
+      }, delay)
     }
   }, [mode, onlineRole, roomId, playerName, broadcastState])
 
@@ -1610,12 +1742,114 @@ export default function MonopolyGame() {
 
           {/* 操作区 */}
           <div className="p-4 border-b border-white/8">
-            {diceResult && !buyPrompt && (
+            {diceResult && !buyPrompt && !selectedCard && (
               <div className="text-center text-sm text-amber-400 font-bold mb-2 bounce-in">
                 🎲 {diceResult}
               </div>
             )}
-            {buyPrompt ? (
+            {selectedCard ? (
+              <div className="bounce-in">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">{selectedCard.emoji}</span>
+                  <span className="text-gray-100 font-bold">{selectedCard.name}</span>
+                </div>
+                <div className="text-xs text-gray-400 mb-3">{selectedCard.description}</div>
+
+                {selectedCard.type === 'remote_dice' && (
+                  <div className="space-y-2">
+                    <div className="text-xs text-gray-300 mb-1">选择点数 (2-12)：</div>
+                    <div className="grid grid-cols-6 gap-1.5">
+                      {[2,3,4,5,6,7,8,9,10,11,12].map(n => (
+                        <button key={n} onClick={() => handleUseCard(selectedCard, { diceTotal: n })}
+                          className="py-2 bg-white/10 rounded text-white text-sm font-bold hover:bg-amber-500/40 transition-colors">
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => setSelectedCard(null)}
+                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
+                      取消
+                    </button>
+                  </div>
+                )}
+
+                {selectedCard.type === 'swap' && (
+                  <div className="space-y-2">
+                    <div className="text-xs text-gray-300 mb-1">选择要交换位置的玩家：</div>
+                    {game?.players.filter(p => p.id !== currentPlayer?.id && !p.bankrupt).map(p => (
+                      <button key={p.id} onClick={() => handleUseCard(selectedCard, { playerIdx: p.id })}
+                        className="w-full py-2.5 bg-white/8 rounded-lg text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2">
+                        <span>{p.avatar}</span>
+                        <span className="text-sm text-gray-200">{p.name}</span>
+                        <span className="text-xs text-gray-500 ml-auto">¥{Math.max(0, p.money)}</span>
+                      </button>
+                    ))}
+                    <button onClick={() => setSelectedCard(null)}
+                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
+                      取消
+                    </button>
+                  </div>
+                )}
+
+                {selectedCard.type === 'roadblock' && (
+                  <div className="space-y-2">
+                    <div className="text-xs text-gray-300 mb-1">选择放置路障的格子：</div>
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {BOARD.filter(t => t.type === 'property' || t.type === 'railroad' || t.type === 'utility').map(t => (
+                        <button key={t.id} onClick={() => handleUseCard(selectedCard, { tileId: t.id })}
+                          className="w-full py-2 bg-white/8 rounded text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2 text-sm">
+                          <span>{t.emoji}</span>
+                          <span className="text-gray-200">{t.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => setSelectedCard(null)}
+                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
+                      取消
+                    </button>
+                  </div>
+                )}
+
+                {selectedCard.type === 'free_pass' && (
+                  <div className="flex gap-2">
+                    <button onClick={() => handleUseCard(selectedCard)}
+                      className="flex-1 py-2.5 bg-blue-600 rounded-lg text-white text-sm font-bold hover:bg-blue-500 transition-colors">
+                      立即激活
+                    </button>
+                    <button onClick={() => setSelectedCard(null)}
+                      className="flex-1 py-2.5 bg-white/8 rounded-lg text-gray-400 text-sm hover:bg-white/10">
+                      取消
+                    </button>
+                  </div>
+                )}
+
+                {selectedCard.type === 'price_hike' && (
+                  <div className="space-y-2">
+                    <div className="text-xs text-gray-300 mb-1">选择要涨价的地皮（你的地皮）：</div>
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {(currentPlayer?.properties || []).map(tid => {
+                        const t = BOARD[tid]
+                        return (
+                          <button key={tid} onClick={() => handleUseCard(selectedCard, { tileId: tid })}
+                            className="w-full py-2 bg-white/8 rounded text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2 text-sm">
+                            <span>{t.emoji}</span>
+                            <span className="text-gray-200">{t.name}</span>
+                            <span className="text-xs text-gray-500 ml-auto">租金 ¥{t.rent[0]} → ¥{t.rent[0]*2}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {(!currentPlayer?.properties || currentPlayer.properties.length === 0) && (
+                      <div className="text-xs text-gray-500 text-center py-2">你没有地皮可以使用涨价卡</div>
+                    )}
+                    <button onClick={() => setSelectedCard(null)}
+                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
+                      取消
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : buyPrompt ? (
               <div className="bounce-in">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xl">{buyPrompt.tile.emoji}</span>
@@ -1645,6 +1879,28 @@ export default function MonopolyGame() {
                     ? `⏳ 等待 ${currentPlayer?.name} 操作...`
                     : '🎲 掷骰子'}
                 </button>
+                {/* 道具卡按钮 */}
+                {currentPlayer && currentPlayer.cards.length > 0 && game?.phase === 'roll' && (
+                  <button onClick={() => setShowCardPanel(!showCardPanel)}
+                    className="w-full py-2 bg-purple-600/30 border border-purple-500/40 rounded-lg text-purple-300 text-sm font-medium hover:bg-purple-600/50 transition-colors flex items-center justify-center gap-2">
+                    🃏 道具卡 ({currentPlayer.cards.length})
+                    {showCardPanel ? ' ▲' : ' ▼'}
+                  </button>
+                )}
+                {showCardPanel && currentPlayer && currentPlayer.cards.length > 0 && (
+                  <div className="space-y-1.5 bounce-in">
+                    {currentPlayer.cards.map((card, i) => (
+                      <button key={card.id || i} onClick={() => setSelectedCard(card)}
+                        className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-lg text-left hover:bg-white/10 transition-colors flex items-center gap-2">
+                        <span className="text-lg">{card.emoji}</span>
+                        <div className="flex-1">
+                          <div className="text-sm text-gray-200 font-medium">{card.name}</div>
+                          <div className="text-[10px] text-gray-500">{card.description}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center text-gray-500 py-3 animate-pulse">
