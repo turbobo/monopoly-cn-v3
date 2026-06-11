@@ -734,8 +734,8 @@ export function nextPlayer(gs: GameState) {
   gs.currentPlayer = next
   gs.phase = 'roll'
 
-  // 检查回合上限
-  if (gs.round > gs.maxRounds && !gs.gameOver) {
+  // 检查回合上限（maxRounds=0 表示无限/纯淘汰制）
+  if (gs.maxRounds > 0 && gs.round > gs.maxRounds && !gs.gameOver) {
     gs.gameOver = true
     const richest = [...gs.players].filter(p => !p.bankrupt).sort((a, b) => totalWealth(b) - totalWealth(a))
     gs.winner = richest[0]?.id ?? null
@@ -744,7 +744,7 @@ export function nextPlayer(gs: GameState) {
 }
 
 // ===== 创建游戏 =====
-export function createGame(mode: 'ai' | 'local', playerCount: number, initialMoney: number = 1500, difficulty: 'easy' | 'normal' | 'hard' = 'normal'): GameState {
+export function createGame(mode: 'ai' | 'local', playerCount: number, initialMoney: number = 1500, difficulty: 'easy' | 'normal' | 'hard' = 'normal', maxRounds: number = 0): GameState {
   const players: Player[] = []
 
   if (mode === 'ai') {
@@ -763,7 +763,7 @@ export function createGame(mode: 'ai' | 'local', playerCount: number, initialMon
   }
 
   return {
-    players, currentPlayer: 0, round: 1, maxRounds: 30,
+    players, currentPlayer: 0, round: 1, maxRounds,
     dice: [1, 1], phase: 'roll', log: ['🎲 游戏开始！'], gameOver: false, winner: null,
     difficulty,
     roadblocks: [],

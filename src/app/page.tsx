@@ -44,6 +44,7 @@ export default function MonopolyGame() {
   const [mode, setMode] = useState<GameMode>('local')
   const [playerCount, setPlayerCount] = useState(2)
   const [initialMoney, setInitialMoney] = useState(1500)
+  const [maxRounds, setMaxRounds] = useState(0) // 0=无限（纯淘汰制）
   const [difficulty, setDifficulty] = useState<'easy' | 'normal' | 'hard'>('normal')
   const [game, setGame] = useState<GameState | null>(null)
   const [messages, setMessages] = useState<string[]>([])
@@ -602,8 +603,8 @@ export default function MonopolyGame() {
         newMsgs.push(`🎉 游戏结束！${activePlayers[0]?.name} 获胜！`)
       }
 
-      // 回合上限检查
-      if (newState.round > newState.maxRounds && !newState.gameOver) {
+      // 回合上限检查（maxRounds=0 表示无限/纯淘汰制）
+      if (newState.maxRounds > 0 && newState.round > newState.maxRounds && !newState.gameOver) {
         newState.gameOver = true
         const richest = [...newState.players].filter(p => !p.bankrupt).sort((a, b) => totalWealth(b) - totalWealth(a))
         newState.winner = richest[0]?.id ?? null
@@ -773,7 +774,7 @@ export default function MonopolyGame() {
       players,
       currentPlayer: 0,
       round: 1,
-      maxRounds: 30,
+      maxRounds,
       dice: [1, 1],
       phase: 'roll',
       log: ['🎲 在线游戏开始！'],
@@ -797,7 +798,7 @@ export default function MonopolyGame() {
 
   // ===== 本地/AI模式：开始游戏 =====
   const startLocalGame = () => {
-    const newGame = createGame(mode as 'ai' | 'local', playerCount, initialMoney, difficulty)
+    const newGame = createGame(mode as 'ai' | 'local', playerCount, initialMoney, difficulty, maxRounds)
     setGame(newGame)
     setMessages(newGame.log)
     setScreen('game')
@@ -1621,6 +1622,28 @@ export default function MonopolyGame() {
                     </div>
                   </div>
 
+                  <div className="mb-6">
+                    <label className="text-gray-400 text-sm mb-2 block">游戏时长</label>
+                    <div className="grid grid-cols-5 gap-2">
+                      {[
+                        { value: 0, label: '♾️ 无限', desc: '淘汰制' },
+                        { value: 20, label: '20回合', desc: '快速' },
+                        { value: 30, label: '30回合', desc: '标准' },
+                        { value: 50, label: '50回合', desc: '长局' },
+                        { value: 100, label: '100回合', desc: '史诗' },
+                      ].map(r => (
+                        <button key={r.value} onClick={() => setMaxRounds(r.value)}
+                          className={`py-2.5 rounded-xl text-center transition-all ${maxRounds === r.value ? 'bg-orange-500/20 border-orange-500 text-orange-300 border' : 'bg-white/5 border border-white/10 text-gray-400 hover:border-white/20'}`}>
+                          <div className="text-sm font-medium">{r.label}</div>
+                          <div className="text-[10px] mt-0.5 opacity-70">{r.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-gray-500 mt-2 text-center">
+                      {maxRounds === 0 ? '淘汰制：只剩1人存活时结束' : `最多${maxRounds}回合，到期按总资产判定胜负`}
+                    </div>
+                  </div>
+
                   <div className="mb-8">
                     <label className="text-gray-400 text-sm mb-2 block">游戏难度</label>
                     <div className="grid grid-cols-3 gap-3">
@@ -1769,6 +1792,23 @@ export default function MonopolyGame() {
                       ))}
                     </div>
                   </div>
+                  <div>
+                    <label className="text-gray-400 text-sm mb-2 block">游戏时长</label>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {[
+                        { value: 0, label: '♾️ 无限' },
+                        { value: 20, label: '20回合' },
+                        { value: 30, label: '30回合' },
+                        { value: 50, label: '50回合' },
+                        { value: 100, label: '100回合' },
+                      ].map(r => (
+                        <button key={r.value} onClick={() => setMaxRounds(r.value)}
+                          className={`py-2 rounded-lg text-center transition-all ${maxRounds === r.value ? 'bg-orange-500/20 border-orange-500 text-orange-300 border' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
+                          <div className="text-xs font-medium">{r.label}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1886,7 +1926,7 @@ export default function MonopolyGame() {
                 </div>
                 <div>
                   <div className="text-gray-100 font-bold text-lg">{currentPlayer?.name}的回合</div>
-                  <div className="text-gray-500 text-xs">第{game.round}回合 / 共{game.maxRounds}回合</div>
+                  <div className="text-gray-500 text-xs">第{game.round}回合{game.maxRounds > 0 ? ` / 共${game.maxRounds}回合` : ' · 淘汰制'}</div>
                 </div>
               </div>
               <div className="text-right">
