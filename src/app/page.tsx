@@ -783,6 +783,12 @@ export default function MonopolyGame() {
           }
           animatingRef.current = false
 
+          // 非购买场景：广播 game-state 确保 Guest 状态同步
+          // （dice-rolled 只在动画前发送，Guest 动画回调中可能因 ref 覆盖丢失状态）
+          if (!stateModified && precomputedState.phase !== 'action') {
+            broadcastState(precomputedState, precomputedMsgs)
+          }
+
           // 只有状态未被外部修改时才设置购买提示/超时
           if (!stateModified && precomputedState.phase === 'action') {
             const updatedPlayer = precomputedState.players[precomputedState.currentPlayer]
