@@ -580,7 +580,18 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
       messages.push(`👮 ${player.name} 被送进监狱！`)
       break
     case 'tax': {
-      const tax = tile.name === '个人所得税' ? 100 : 150
+      let tax: number
+      if (tile.name === '个人所得税') {
+        tax = 100
+      } else {
+        // 房产税：基础 ¥50 + 每块地皮 ¥20，上限 ¥300
+        const BASE_PROPERTY_TAX = 50
+        const TAX_PER_PROPERTY = 20
+        const MAX_PROPERTY_TAX = 300
+        const propertyCount = player.properties.length
+        tax = Math.min(BASE_PROPERTY_TAX + propertyCount * TAX_PER_PROPERTY, MAX_PROPERTY_TAX)
+        messages.push(`🏦 ${player.name} 拥有 ${propertyCount} 块地皮`)
+      }
       player.money -= tax
       messages.push(`💸 ${player.name} 缴纳${tile.name} ¥${tax}`)
       break
