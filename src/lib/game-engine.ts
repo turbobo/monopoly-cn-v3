@@ -486,6 +486,158 @@ export function tickPriceHikes(gs: GameState): string[] {
   })
   return msgs
 }
+// ===== AI 道具卡使用决策 =====
+// 在掷骰前调用，AI 根据场景自动使用最合适的道具卡
+// 返回：{ messages, forcedDice } — forcedDice 非 null 时表示使用了遥控骰子
+export function aiUseCardDecision(gs: GameState): { messages: string[]; forcedDice: [number, number] | null } {
+  const msgs: string[] = []
+  const player = gs.players[gs.currentPlayer]
+  if (!player.isAI || player.bankrupt || player.cards.length === 0) return { messages: msgs, forcedDice: null }
+
+  const personality = player.aiPersonality || 'balanced'
+  const otherPlayers = gs.players.filter(p => !p.bankrupt && p.id !== player.id)
+
+  // --- 1. 免费卡（🛡️）：资金紧张时提前激活，避免下一格被收高额租金 ---
+  if (!player.freePassActive) {
+    const freeCard = player.cards.find(c => c.type === 'free_pass')
+    const moneyThreshold = personality === 'aggressive' ? 100
+      : personality === 'conservative' ? 250
+      : 150
+    if (freeCard && player.money < moneyThreshold) {
+      const msg = useFreePassCard(gs, player.id)
+      if (msg) msgs.push(msg)
+    }
+  }
+
+  // --- 2. 涨价卡（📈）：优先放在已集齐同色组的地皮上，收益最大 ---
+  const hikeCard = player.cards.find(c => c.type === 'price_hike')
+  if (hikeCard && player.properties.length > 0) {
+    const alreadyHiked = new Set(gs.priceHikes.map(h => h.tileId))
+    let bestTile: number | null = null
+    let bestScore = -1
+    for (const [, group] of Object.entries(COLOR_GROUPS)) {
+      const ownedInGroup = group.filter(id => player.properties.includes(id))
+      if (ownedInGroup.length < group.length) continue
+      for (const tileId of ownedInGroup) {
+        if (alreadyHiked.has(tileId)) continue
+        const score = BOARD[tileId].price
+        if (score > bestScore) { bestScore = score; bestTile = tileId }
+      }
+    }
+    // 若没有集齐同色组，激进型也放在价格最高的自有地皮上
+    if (bestTile === null && personality === 'aggressive') {
+      for (const tileId of player.properties) {
+        if (alreadyHiked.has(tileId)) continue
+        const score = BOARD[tileId].price
+        if (score > bestScore) { bestScore = score; bestTile = tileId }
+      }
+    }
+    if (bestTile !== null) {
+      const msg = usePriceHikeCard(gs, player.id, bestTile)
+      if (msg) msgs.push(msg)
+    }
+  }
+
+  // --- 3. 路障卡（🚧）：放在最富有对手即将经过的高价格子前（仅激进/平衡型）---
+  if (personality !== 'conservative') {
+    const roadblockCard = player.cards.find(c => c.type === 'roadblock')
+    if (roadblockCard) {
+      const richestOpponent = [...otherPlayers].sort((a, b) => b.money - a.money)[0]
+      if (richestOpponent) {
+        let bestTrapTile: number | null = null
+        let bestTrapScore = -1
+        const existingRoadblocks = new Set(gs.roadblocks.map(r => r.tileId))
+        for (let steps = 2; steps <= 6; steps++) {
+          const futureTileId = (richestOpponent.position + steps) % BOARD_SIZE
+          const tile = BOARD[futureTileId]
+          if (tile.type !== 'property') continue
+          if (existingRoadblocks.has(futureTileId)) continue
+          if (player.properties.includes(futureTileId)) continue
+          if (tile.price > bestTrapScore) { bestTrapScore = tile.price; bestTrapTile = futureTileId }
+        }
+        if (bestTrapTile !== null) {
+          const msg = useRoadblockCard(gs, player.id, bestTrapTile)
+          if (msg) msgs.push(msg)
+        }
+      }
+    }
+  }
+
+  // --- 4. 交换卡（🔄）：资金极度紧张时，与最穷对手换位（紧急逃脱高租金区）---
+  const swapCard = player.cards.find(c => c.type === 'swap')
+  if (swapCard) {
+    const desperateThreshold = personality === 'aggressive' ? 50 : 80
+    if (player.money < desperateThreshold && otherPlayers.length > 0) {
+      const poorestOpponent = [...otherPlayers].sort((a, b) => a.money - b.money)[0]
+      const msg = useSwapCard(gs, player.id, poorestOpponent.id)
+      if (msg) msgs.push(msg)
+    }
+  }
+
+  // --- 5. 遥控骰子（🎯）：通过 forcedDice 返回，由 executeTurn 使用 ---
+  let forcedDice: [number, number] | null = null
+  const remoteDiceCard = player.cards.find(c => c.type === 'remote_dice')
+  if (remoteDiceCard) {
+    let targetSteps: number | null = null
+
+    if (personality === 'aggressive') {
+      // 找2-12步内价格最高的无主地皮
+      let bestPrice = -1
+      for (let steps = 2; steps <= 12; steps++) {
+        const tileId = (player.position + steps) % BOARD_SIZE
+        const tile = BOARD[tileId]
+        if (tile.type !== 'property') continue
+        const isOwned = gs.players.some(p => p.properties.includes(tileId))
+        if (!isOwned && tile.price > bestPrice) {
+          bestPrice = tile.price
+          targetSteps = steps
+        }
+      }
+      // 若没有无主高价地，找能补齐同色组的地皮
+      if (targetSteps === null) {
+        for (const [, group] of Object.entries(COLOR_GROUPS)) {
+          const owned = group.filter(id => player.properties.includes(id))
+          if (owned.length === 0) continue
+          for (const tileId of group.filter(id => !player.properties.includes(id))) {
+            for (let steps = 2; steps <= 12; steps++) {
+              if ((player.position + steps) % BOARD_SIZE === tileId) {
+                const takenByOther = gs.players.some(p => p.properties.includes(tileId) && p.id !== player.id)
+                if (!takenByOther) { targetSteps = steps; break }
+              }
+            }
+            if (targetSteps !== null) break
+          }
+          if (targetSteps !== null) break
+        }
+      }
+    } else {
+      // 平衡/保守型：资金紧张时绕开对手高价地皮
+      if (player.money < 150) {
+        let safestSteps: number | null = null
+        let minRisk = Infinity
+        for (let steps = 2; steps <= 12; steps++) {
+          const tileId = (player.position + steps) % BOARD_SIZE
+          const owner = gs.players.find(p => p.properties.includes(tileId) && p.id !== player.id)
+          const risk = owner ? BOARD[tileId].price : 0
+          if (risk < minRisk) { minRisk = risk; safestSteps = steps }
+        }
+        // 只有真的有风险要规避时才用牌
+        if (safestSteps !== null && minRisk > 0) targetSteps = safestSteps
+      }
+    }
+
+    if (targetSteps !== null) {
+      forcedDice = useRemoteDice(targetSteps)
+      // 消耗卡牌
+      const cardIdx = player.cards.findIndex(c => c.type === 'remote_dice')
+      if (cardIdx >= 0) player.cards.splice(cardIdx, 1)
+      msgs.push(`🎯 ${player.name} 使用遥控骰子，指定点数 ${targetSteps}！`)
+    }
+  }
+
+  return { messages: msgs, forcedDice }
+}
+
 export function executeTurn(gs: GameState, preRolledDice?: [number, number]): string[] {
   const messages: string[] = []
   const player = gs.players[gs.currentPlayer]
@@ -535,8 +687,16 @@ export function executeTurn(gs: GameState, preRolledDice?: [number, number]): st
     }
   }
 
-  // 使用预掷骰子或新掷
-  const dice = preRolledDice || rollDice()
+  // AI 道具卡使用决策（掷骰前，可能返回遥控骰子的指定点数）
+  let aiDice: [number, number] | null = null
+  if (player.isAI) {
+    const { messages: cardMsgs, forcedDice } = aiUseCardDecision(gs)
+    messages.push(...cardMsgs)
+    aiDice = forcedDice
+  }
+
+  // 使用预掷骰子 > AI遥控骰子 > 随机掷骰
+  const dice = preRolledDice ?? aiDice ?? rollDice()
   gs.dice = dice
   const total = dice[0] + dice[1]
   messages.push(`🎲 ${player.name} 掷出 ${dice[0]} + ${dice[1]} = ${total}`)
