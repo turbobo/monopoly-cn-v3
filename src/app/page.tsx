@@ -40,6 +40,7 @@ export default function MonopolyGame() {
   const screenRef = useRef<Screen>('menu')
   const animatingRef = useRef(false)
   const roomValidatedRef = useRef(false)
+  const buyPromptRef = useRef<{ tile: typeof BOARD[0] } | null>(null)
   const pendingDiceRolledRef = useRef<PeerMessage[]>([])
   const forcedDiceRef = useRef<[number, number] | null>(null)  // 游戏状态
   const [screen, setScreen] = useState<Screen>('menu')
@@ -87,6 +88,7 @@ export default function MonopolyGame() {
   }, [playerName])
   useEffect(() => { playersRef.current = onlinePlayers }, [onlinePlayers])
   useEffect(() => { screenRef.current = screen }, [screen])
+  useEffect(() => { buyPromptRef.current = buyPrompt }, [buyPrompt])
 
   // 页面卸载时清理 LCManager，防止僵尸连接
   useEffect(() => {
@@ -1050,8 +1052,8 @@ export default function MonopolyGame() {
 
   // ===== 购买/跳过 =====
   const handleBuy = useCallback((buy: boolean) => {
-    // 防双击：如果购买弹窗已关闭，直接忽略
-    if (!buyPrompt) return
+    // 防双击：如果购买弹窗已关闭，直接忽略（用 ref 避免闭包陷阱）
+    if (!buyPromptRef.current) return
     const latestGame = gameRef.current
     if (!latestGame) return
     const buyingPlayer = latestGame.players[latestGame.currentPlayer]
