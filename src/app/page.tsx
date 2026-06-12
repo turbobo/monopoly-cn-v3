@@ -6,7 +6,7 @@ import {
   GameState, BOARD, BOARD_SIZE, Player, GameCard, CardType,
   createGame, executeTurn, buyProperty, totalWealth,
   rollDice, finalizeTurn, useRemoteDice, useSwapCard, useRoadblockCard,
-  useFreePassCard, usePriceHikeCard,
+  useFreePassCard, usePriceHikeCard, aiUseCardDecision,
 } from '@/lib/game-engine'
 import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, playPlayerJoinSound, playPlayerLeaveSound, setMuted } from '@/lib/sound'
 import { GoEasyManager, PeerMessage } from '@/lib/goeasy-manager'
@@ -549,6 +549,18 @@ export default function MonopolyGame() {
           }
           break
         }
+
+        case 'sync-request': {
+          // Host 收到 Guest 的同步请求，广播当前游戏状态
+          if (peer.getIsHost()) {
+            const currentGs = gameRef.current
+            const currentMsgs = messagesRef.current
+            if (currentGs) {
+              broadcastState(currentGs, currentMsgs)
+            }
+          }
+          break
+        }
       }
     }
 
@@ -989,7 +1001,7 @@ export default function MonopolyGame() {
       rendererRef.current?.playMoveAnimation(
         currentPlayer.id, oldPos, steps, currentPlayer.color, currentPlayer.avatar,
         () => {
-          const newState: GameState = JSON.parse(JSON.stringify(game))
+          const newState: GameState = JSON.parse(JSON.stringify(gameRef.current!))
           const turnMessages = executeTurn(newState, dice)
           const newMsgs = [...messagesRef.current, ...turnMessages]
 
@@ -1239,7 +1251,9 @@ export default function MonopolyGame() {
     setMessages(prev => [...prev, `⏳ ${current.name} 思考中...`])
 
     setTimeout(() => {
-      const dice = rollDice()
+      // 先检查 AI 是否使用遥控骰子，确保动画显示正确的数字
+      const { forcedDice } = aiUseCardDecision(gs)
+      const dice = forcedDice ?? rollDice()
       playDiceRoll()
 
       rendererRef.current?.playDiceAnimation(dice, () => {
@@ -1251,7 +1265,9 @@ export default function MonopolyGame() {
         rendererRef.current?.playMoveAnimation(
           current.id, oldPos, steps, current.color, current.avatar,
           () => {
-            const turnMessages = executeTurn(gs, dice)
+            // 深拷贝状态，避免直接修改 React state
+            const gsCopy: GameState = JSON.parse(JSON.stringify(gs))
+            const turnMessages = executeTurn(gsCopy, dice)
 
             for (const msg of turnMessages) {
               if (msg.includes('购买')) playBuySound()
@@ -1261,12 +1277,13 @@ export default function MonopolyGame() {
 
             const allMsgs = [...msgs, ...turnMessages]
             setMessages(prev => [...prev, ...turnMessages])
-            setGame({ ...gs })
+            setGame(gsCopy)
+            gameRef.current = gsCopy
 
-            if (gs.gameOver) {
+            if (gsCopy.gameOver) {
               setScreen('end')
             } else {
-              setTimeout(() => processAITurnsRef.current(gs, allMsgs), 800)
+              setTimeout(() => processAITurnsRef.current(gsCopy, allMsgs), 800)
             }
           },
           () => playStepSound()
@@ -1354,6 +1371,7 @@ export default function MonopolyGame() {
         <canvas ref={canvasRef} className="touch-none cursor-pointer"
           onClick={handleCanvasClick}
           onTouchEnd={(e) => {
+            e.preventDefault() // 阻止浏览器合成 click 事件，避免双击
             if (e.changedTouches.length === 1) {
               const t = e.changedTouches[0]
               const renderer = rendererRef.current

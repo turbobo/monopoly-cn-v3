@@ -880,15 +880,15 @@ export function finalizeTurn(gs: GameState): string[] {
 export function nextPlayer(gs: GameState) {
   const len = gs.players.length
   let next = (gs.currentPlayer + 1) % len
-  // 第一步即从最后一位回绕到第一位时，标记回绕
-  let wrappedAround = gs.currentPlayer === len - 1
+  // 只在初始步骤（非跳过破产玩家的循环）跨越末尾→开头边界时，才算作回合回绕
+  const initialWrapped = next <= gs.currentPlayer
   let safety = 0
   while (gs.players[next].bankrupt && safety < len) {
-    const prev = next
     next = (next + 1) % len
-    if (prev === len - 1 && next === 0) wrappedAround = true
     safety++
   }
+  // 回合数仅在"经过起点"时递增，跳过破产玩家不算新回合
+  const wrappedAround = initialWrapped
   if (wrappedAround) {
     gs.round++
     // 每回合结束时递减涨价卡剩余回合
