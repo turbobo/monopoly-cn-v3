@@ -750,10 +750,15 @@ export function createGame(mode: 'ai' | 'local', playerCount: number, initialMon
   if (mode === 'ai') {
     players.push(createPlayer(0, '你', false, undefined, initialMoney))
     // playerCount = AI对手数量（1/2/3）
-    const personalities: ('aggressive' | 'balanced' | 'conservative')[] = ['aggressive', 'balanced', 'conservative']
+    // 根据难度分配 AI 性格：简单=保守，普通=平衡，困难=激进
+    const personalityMap: Record<'easy' | 'normal' | 'hard', 'aggressive' | 'balanced' | 'conservative'> = {
+      easy: 'conservative',
+      normal: 'balanced',
+      hard: 'aggressive',
+    }
     const names = ['小火', '阿平', '老守']
     for (let i = 0; i < Math.min(playerCount, 3); i++) {
-      players.push(createPlayer(i + 1, names[i], true, personalities[i], initialMoney))
+      players.push(createPlayer(i + 1, names[i], true, personalityMap[difficulty], initialMoney))
     }
   } else {
     const names = ['玩家1', '玩家2', '玩家3', '玩家4']
