@@ -34,6 +34,8 @@ export default function MonopolyGame() {
   const onlinePlayersRef = useRef<OnlinePlayer[]>([])
   const myNameRef = useRef('')
   const buyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const aiTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)   // AI 回合延迟
+  const guestRollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // Guest 掷骰超时
   const playersRef = useRef<OnlinePlayer[]>([])
   const screenRef = useRef<Screen>('menu')
   const animatingRef = useRef(false)
@@ -110,16 +112,21 @@ export default function MonopolyGame() {
     renderer.start()
 
     let resizeTimer: ReturnType<typeof setTimeout>
+    let orientTimer: ReturnType<typeof setTimeout>
     const handleResize = () => {
       clearTimeout(resizeTimer)
       resizeTimer = setTimeout(() => renderer.resize(), 100)
     }
-    const handleOrientation = () => setTimeout(() => renderer.resize(), 150)
+    const handleOrientation = () => {
+      clearTimeout(orientTimer)
+      orientTimer = setTimeout(() => renderer.resize(), 150)
+    }
     window.addEventListener('resize', handleResize)
     window.addEventListener('orientationchange', handleOrientation)
 
     return () => {
       clearTimeout(resizeTimer)
+      clearTimeout(orientTimer)
       renderer.stop()
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('orientationchange', handleOrientation)
@@ -650,7 +657,11 @@ export default function MonopolyGame() {
           handlePlayerDisconnect(leaverInfo.name, peer)
         }
       } else {
-        setConnectionError('与房主的连接已断开')
+        // Guest 端：检查断开的是否为房主
+        const disconnectedPeer = playersRef.current.find(p => p.id === peerId)
+        if (disconnectedPeer?.isHost) {
+          setConnectionError('房主已断开连接')
+        }
       }
     }
 
@@ -972,7 +983,7 @@ export default function MonopolyGame() {
         })
       }
       // 超时8秒后自动重置（兜底，防止卡死）
-      setTimeout(() => {
+      guestRollTimeoutRef.current = setTimeout(() => {
         if (!animatingRef.current) setRolling(false)
       }, 8000)
       return
@@ -1039,6 +1050,8 @@ export default function MonopolyGame() {
 
   // ===== 购买/跳过 =====
   const handleBuy = useCallback((buy: boolean) => {
+    // 防双击：如果购买弹窗已关闭，直接忽略
+    if (!buyPrompt) return
     const latestGame = gameRef.current
     if (!latestGame) return
     const buyingPlayer = latestGame.players[latestGame.currentPlayer]
@@ -1125,20 +1138,6 @@ export default function MonopolyGame() {
     const center = renderer.getTileScreenCenter(tileIdx)
     if (center) {
       setTileInfo({ tileIndex: tileIdx, x: center.x, y: center.y })
-    }
-  }, [game, tileInfo])
-
-  // 点击空白区域关闭弹窗
-  const handleCanvasTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
-    const renderer = rendererRef.current
-    if (!renderer || !game || e.touches.length !== 1) return
-    const touch = e.touches[0]
-    const tileIdx = renderer.hitTest(touch.clientX, touch.clientY)
-    if (tileIdx < 0) {
-      setTileInfo(null)
-    } else if (tileInfo?.tileIndex !== tileIdx) {
-      const center = renderer.getTileScreenCenter(tileIdx)
-      if (center) setTileInfo({ tileIndex: tileIdx, x: center.x, y: center.y })
     }
   }, [game, tileInfo])
 
@@ -1250,7 +1249,7 @@ export default function MonopolyGame() {
 
     setMessages(prev => [...prev, `⏳ ${current.name} 思考中...`])
 
-    setTimeout(() => {
+    aiTimeoutRef.current = setTimeout(() => {
       // 先检查 AI 是否使用遥控骰子，确保动画显示正确的数字
       const { forcedDice } = aiUseCardDecision(gs)
       const dice = forcedDice ?? rollDice()
@@ -1283,7 +1282,7 @@ export default function MonopolyGame() {
             if (gsCopy.gameOver) {
               setScreen('end')
             } else {
-              setTimeout(() => processAITurnsRef.current(gsCopy, allMsgs), 800)
+              aiTimeoutRef.current = setTimeout(() => processAITurnsRef.current(gsCopy, allMsgs), 800)
             }
           },
           () => playStepSound()
@@ -1295,10 +1294,9 @@ export default function MonopolyGame() {
 
   // ===== 重新开始 =====
   const restartGame = () => {
-    if (buyTimeoutRef.current) {
-      clearTimeout(buyTimeoutRef.current)
-      buyTimeoutRef.current = null
-    }
+    if (buyTimeoutRef.current) { clearTimeout(buyTimeoutRef.current); buyTimeoutRef.current = null }
+    if (aiTimeoutRef.current) { clearTimeout(aiTimeoutRef.current); aiTimeoutRef.current = null }
+    if (guestRollTimeoutRef.current) { clearTimeout(guestRollTimeoutRef.current); guestRollTimeoutRef.current = null }
     animatingRef.current = false
     pendingDiceRolledRef.current = []
     setGameStarting(false)

@@ -149,6 +149,8 @@ export class GoEasyManager {
       // 超时
       setTimeout(() => {
         if (!this.connected) {
+          // 超时后主动断开，防止僵尸连接
+          try { this.goeasy?.disconnect({ onFailed: () => {} }) } catch {}
           reject(new Error('连接 GoEasy 服务器超时'))
         }
       }, 15000)
@@ -158,6 +160,10 @@ export class GoEasyManager {
   // 创建房间 → 创建并订阅 GoEasy Channel
   async createRoom(): Promise<string> {
     if (!this.goeasy || !this.connected) throw new Error('Not connected')
+    // 防止重复创建房间
+    if (this.channel) {
+      try { this.goeasy.pubsub.unsubscribe({ channel: this.channel, onFailed: () => {} }) } catch {}
+    }
 
     this.isHost = true
     this.roomId = this.generateShortId()
@@ -178,12 +184,20 @@ export class GoEasyManager {
           reject(new Error(`创建房间失败: ${JSON.stringify(err)}`))
         },
       })
+      // 超时保护
+      setTimeout(() => {
+        if (!this.channel) reject(new Error('创建房间超时'))
+      }, 15000)
     })
   }
 
   // 加入房间 → 订阅已有 GoEasy Channel
   async connectToRoom(roomId: string): Promise<void> {
     if (!this.goeasy || !this.connected) throw new Error('Not connected')
+    // 防止重复加入房间
+    if (this.channel) {
+      try { this.goeasy.pubsub.unsubscribe({ channel: this.channel, onFailed: () => {} }) } catch {}
+    }
 
     this.isHost = false
     this.roomId = roomId
@@ -338,7 +352,10 @@ export class GoEasyManager {
                   this.goeasy!.pubsub.publish({
                     channel: this.channel,
                     message: msg,
-                    onFailed: () => {},
+                    onFailed: () => {
+                      // 重发失败的消息放回队列，避免永久丢失
+                      if (this.publishQueue.length < 50) this.publishQueue.push(msg)
+                    },
                   })
                 }
                 // 重连成功：重置计数、通知 UI
@@ -536,6 +553,7 @@ export class GoEasyManager {
     this.disconnectionHandlers = []
     this.connectionStatusHandlers = []
     this.initialized = false
+    GoEasyManager.sdkInitialized = false
     console.log('[GoEasyManager] Destroyed')
   }
 }

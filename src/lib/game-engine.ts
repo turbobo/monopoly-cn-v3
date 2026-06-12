@@ -232,6 +232,8 @@ export function checkBankrupt(player: Player): { bankrupt: boolean; soldTiles: n
     }
     if (player.money < 0) {
       player.bankrupt = true
+      // 破产后清空剩余地皮，归还银行（其他玩家可购买）
+      player.properties = []
       return { bankrupt: true, soldTiles }
     }
   }
@@ -421,6 +423,9 @@ export function useSwapCard(gs: GameState, userPlayerId: number, targetPlayerId:
   const tmp = user.position
   user.position = target.position
   target.position = tmp
+  // 同步交换监狱状态，避免一方在错误位置触发监狱逻辑
+  const tmpJail = user.inJail; user.inJail = target.inJail; target.inJail = tmpJail
+  const tmpJailTurns = user.jailTurns; user.jailTurns = target.jailTurns; target.jailTurns = tmpJailTurns
   // 移除已使用的卡
   const cardIdx = user.cards.findIndex(c => c.type === 'swap')
   if (cardIdx >= 0) user.cards.splice(cardIdx, 1)

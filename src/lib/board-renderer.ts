@@ -39,6 +39,7 @@ export class BoardRenderer {
   private size: number = 0
   private tileSize: number = 0
   private cornerSize: number = 0
+  private dpr: number = 1
   private animId: number = 0
   private time: number = 0
   private particles: Particle[] = []
@@ -68,6 +69,13 @@ export class BoardRenderer {
     this.ctx = canvas.getContext('2d')!
   }
 
+  /** 按 DPR 缩放像素值 */
+  private px(n: number): number { return Math.round(n * this.dpr) }
+  /** 生成 DPR 适配的 font 字符串 */
+  private font(size: number, family: string = 'sans-serif', weight: string = ''): string {
+    return `${weight} ${this.px(size)}px ${family}`.trim()
+  }
+
   resize() {
     const container = this.canvas.parentElement
     if (!container) return
@@ -77,6 +85,7 @@ export class BoardRenderer {
       : Math.min(window.innerWidth * 0.6, window.innerHeight * 0.9)
     const w = Math.min(container.clientWidth - 8, container.clientHeight - 8, maxW)
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    this.dpr = dpr
     this.canvas.width = w * dpr
     this.canvas.height = w * dpr
     this.canvas.style.width = w + 'px'
@@ -397,26 +406,26 @@ export class BoardRenderer {
       ctx.textBaseline = 'middle'
 
       if (pos.isCorner) {
-        ctx.font = '30px sans-serif'
-        ctx.fillText(tile.emoji, cx, cy - 12)
+        ctx.font = this.font(30)
+        ctx.fillText(tile.emoji, cx, cy - this.px(12))
         ctx.fillStyle = '#e8e8e8'
-        ctx.font = 'bold 17px "Noto Sans SC", sans-serif'
-        ctx.fillText(tile.name, cx, cy + 20)
+        ctx.font = this.font(17, '"Noto Sans SC", sans-serif', 'bold')
+        ctx.fillText(tile.name, cx, cy + this.px(20))
       } else {
-        ctx.font = '22px sans-serif'
-        ctx.fillText(tile.emoji, cx, cy - 16)
+        ctx.font = this.font(22)
+        ctx.fillText(tile.emoji, cx, cy - this.px(16))
 
         ctx.fillStyle = '#f0f0f0'
-        ctx.font = 'bold 16px "Noto Sans SC", sans-serif'
-        ctx.fillText(tile.name, cx, cy + 5)
+        ctx.font = this.font(16, '"Noto Sans SC", sans-serif', 'bold')
+        ctx.fillText(tile.name, cx, cy + this.px(5))
 
         if (owner) {
-          ctx.font = '15px sans-serif'
-          ctx.fillText(owner.avatar, cx, cy + 23)
+          ctx.font = this.font(15)
+          ctx.fillText(owner.avatar, cx, cy + this.px(23))
         } else if (tile.price > 0) {
           ctx.fillStyle = '#8899aa'
-          ctx.font = '13px "Noto Sans SC", sans-serif'
-          ctx.fillText(`¥${tile.price}`, cx, cy + 23)
+          ctx.font = this.font(13, '"Noto Sans SC", sans-serif')
+          ctx.fillText(`¥${tile.price}`, cx, cy + this.px(23))
         }
       }
 
@@ -424,7 +433,7 @@ export class BoardRenderer {
       if (hasRoadblock) {
         const badgeX = pos.x + pos.w - pad - 4
         const badgeY = pos.y + pad + 4
-        ctx.font = '14px sans-serif'
+        ctx.font = this.font(14)
         ctx.textAlign = 'right'
         ctx.textBaseline = 'top'
         ctx.fillText('🚧', badgeX, badgeY)
@@ -432,7 +441,7 @@ export class BoardRenderer {
       if (hasPriceHike) {
         const badgeX = pos.x + pad + 4
         const badgeY = pos.y + pad + 4
-        ctx.font = '14px sans-serif'
+        ctx.font = this.font(14)
         ctx.textAlign = 'left'
         ctx.textBaseline = 'top'
         ctx.fillText('📈', badgeX, badgeY)
@@ -447,14 +456,14 @@ export class BoardRenderer {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
 
     ctx.fillStyle = 'rgba(139,92,246,0.15)'
-    ctx.font = 'bold 44px "Noto Sans SC", sans-serif'
-    ctx.fillText('大富翁', cx + 2, cy - 38)
+    ctx.font = this.font(44, '"Noto Sans SC", sans-serif', 'bold')
+    ctx.fillText('大富翁', cx + this.px(2), cy - this.px(38))
     ctx.fillStyle = '#8b5cf6'
-    ctx.font = 'bold 42px "Noto Sans SC", sans-serif'
-    ctx.fillText('大富翁', cx, cy - 40)
+    ctx.font = this.font(42, '"Noto Sans SC", sans-serif', 'bold')
+    ctx.fillText('大富翁', cx, cy - this.px(40))
     ctx.fillStyle = '#6366f1'
-    ctx.font = '24px "Noto Sans SC", sans-serif'
-    ctx.fillText('中国行', cx, cy - 5)
+    ctx.font = this.font(24, '"Noto Sans SC", sans-serif')
+    ctx.fillText('中国行', cx, cy - this.px(5))
 
     if (this.diceAnim.active) {
       const p = this.diceAnim.progress
@@ -555,10 +564,10 @@ export class BoardRenderer {
         // 背景胶囊
         const total = this.lastDice[0] + this.lastDice[1]
         const text = `${total}`
-        ctx.font = 'bold 28px "Noto Sans SC", sans-serif'
-        const textW = ctx.measureText(text).width + 30
+        ctx.font = this.font(28, '"Noto Sans SC", sans-serif', 'bold')
+        const textW = ctx.measureText(text).width + this.px(30)
         ctx.fillStyle = 'rgba(245,158,11,0.15)'
-        this.roundedRect(-textW / 2, -18, textW, 36, 18)
+        this.roundedRect(-textW / 2, -this.px(18), textW, this.px(36), this.px(18))
         ctx.fill()
         ctx.strokeStyle = 'rgba(245,158,11,0.4)'
         ctx.lineWidth = 1.5
@@ -724,7 +733,7 @@ export class BoardRenderer {
 
       ctx.save()
       ctx.globalAlpha = alpha
-      ctx.font = '18px sans-serif'
+      ctx.font = this.font(18)
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillText('♟️', cx, cy + 24)
@@ -735,7 +744,7 @@ export class BoardRenderer {
   // 绘制移动中的棋子（♟️标记 + 旋转和形变）
   private drawTokenAnimated(x: number, y: number, p: Player, rotation: number, scaleX: number, scaleY: number) {
     const { ctx } = this
-    const r = 18
+    const r = this.px(18)
 
     ctx.save()
     ctx.translate(x, y)
@@ -766,7 +775,7 @@ export class BoardRenderer {
 
     // ♟️ 标记（反向旋转保持正立）
     ctx.rotate(-rotation)
-    ctx.font = '24px sans-serif'
+    ctx.font = this.font(24)
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText('♟️', 0, 1)
@@ -776,12 +785,12 @@ export class BoardRenderer {
 
   private drawToken(tokenX: number, tokenY: number, p: Player, isCurrent: boolean) {
     const { ctx } = this
-    const r = isCurrent ? 18 : 12
+    const r = isCurrent ? this.px(18) : this.px(12)
 
     // ===== 当前玩家：高亮光标 =====
     if (isCurrent) {
       // 底部发光光圈
-      const glowR = r + 10
+      const glowR = r + this.px(10)
       const glowGrad = ctx.createRadialGradient(tokenX, tokenY, r * 0.8, tokenX, tokenY, glowR)
       glowGrad.addColorStop(0, p.color + '55')
       glowGrad.addColorStop(1, p.color + '00')
@@ -789,7 +798,7 @@ export class BoardRenderer {
       ctx.fillStyle = glowGrad; ctx.fill()
 
       // 脉冲外圈
-      const pulseR = r + 4 + Math.sin(this.time * 5) * 2
+      const pulseR = r + this.px(4) + Math.sin(this.time * 5) * this.px(2)
       ctx.beginPath(); ctx.arc(tokenX, tokenY, pulseR, 0, Math.PI * 2)
       ctx.strokeStyle = p.color
       ctx.lineWidth = 2.5
@@ -825,19 +834,19 @@ export class BoardRenderer {
     ctx.stroke()
 
     // 头像
-    ctx.font = `${isCurrent ? 22 : 14}px sans-serif`
+    ctx.font = this.font(isCurrent ? 22 : 14)
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
     ctx.fillText(p.avatar, tokenX, tokenY + 1)
 
     // ===== 标签 =====
-    const labelStartY = tokenY + r + (isCurrent ? 14 : 10)
+    const labelStartY = tokenY + r + (isCurrent ? this.px(14) : this.px(10))
 
     // 玩家名（当前玩家显示）
     if (isCurrent) {
-      ctx.font = 'bold 11px "Noto Sans SC", sans-serif'
-      const nameW = ctx.measureText(p.name).width + 12
+      ctx.font = this.font(11, '"Noto Sans SC", sans-serif', 'bold')
+      const nameW = ctx.measureText(p.name).width + this.px(12)
       ctx.fillStyle = p.color
-      this.roundedRect(tokenX - nameW / 2, labelStartY - 7, nameW, 14, 7)
+      this.roundedRect(tokenX - nameW / 2, labelStartY - this.px(7), nameW, this.px(14), this.px(7))
       ctx.fill()
       ctx.fillStyle = '#ffffff'
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
@@ -845,10 +854,10 @@ export class BoardRenderer {
     }
 
     // 现金（紧凑显示）
-    const cashY = labelStartY + (isCurrent ? 15 : 0)
+    const cashY = labelStartY + (isCurrent ? this.px(15) : 0)
     const cashText = `¥${p.money}`
-    ctx.font = `bold ${isCurrent ? 11 : 10}px "Noto Sans SC", sans-serif`
-    const cashW = ctx.measureText(cashText).width + 8
+    ctx.font = this.font(isCurrent ? 11 : 10, '"Noto Sans SC", sans-serif', 'bold')
+    const cashW = ctx.measureText(cashText).width + this.px(8)
     ctx.fillStyle = 'rgba(0,0,0,0.7)'
     this.roundedRect(tokenX - cashW / 2, cashY - 6, cashW, 12, 6)
     ctx.fill()
@@ -868,9 +877,9 @@ export class BoardRenderer {
 
       ctx.save(); ctx.globalAlpha = alpha
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.font = `bold ${ft.fontSize}px "Noto Sans SC", sans-serif`
+      ctx.font = this.font(ft.fontSize, '"Noto Sans SC", sans-serif', 'bold')
       const textW = ctx.measureText(ft.text).width
-      const pillW = textW + 20, pillH = ft.fontSize + 10
+      const pillW = textW + this.px(20), pillH = ft.fontSize * this.dpr + this.px(10)
       ctx.fillStyle = 'rgba(0,0,0,0.7)'
       this.roundedRect(ft.x - pillW / 2, floatY - pillH / 2, pillW, pillH, pillH / 2); ctx.fill()
       ctx.fillStyle = ft.color
