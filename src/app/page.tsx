@@ -1998,7 +1998,26 @@ export default function MonopolyGame() {
                             </span>
                           )}
                         </div>
-                        <div className="text-xs" style={{ color: p.color }}>{p.properties.length}块地</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs" style={{ color: p.color }}>{p.properties.length}块地</span>
+                          {/* 道具卡状态 */}
+                          {p.freePassActive && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 flex items-center gap-0.5">
+                              🛡️ 免费卡
+                            </span>
+                          )}
+                          {p.cards.length > 0 && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-0.5">
+                              🃏 ×{p.cards.length}
+                              <span className="opacity-60 ml-0.5">{p.cards.map(c => c.emoji).join('')}</span>
+                            </span>
+                          )}
+                          {game?.priceHikes.some(h => h.ownerPlayerId === p.id) && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              📈 涨价中
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="text-right">
