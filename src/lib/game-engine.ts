@@ -128,15 +128,18 @@ export const PLAYER_PRESETS = [
   { avatar: '🎭', color: '#f59e0b' },
 ]
 
+const AI_AVATARS = ['🔥', '🤖', '🛡️', '🧠', '🎭', '🧑‍🚀']
+
 // ===== 工具函数 =====
 export function rollDice(): [number, number] {
   return [Math.floor(Math.random() * 6) + 1, Math.floor(Math.random() * 6) + 1]
 }
 
-export function createPlayer(id: number, name: string, isAI: boolean, personality?: 'aggressive' | 'balanced' | 'conservative', initialMoney: number = 1500): Player {
+export function createPlayer(id: number, name: string, isAI: boolean, personality?: 'aggressive' | 'balanced' | 'conservative', initialMoney: number = 1500, avatarIndex: number = 0): Player {
   const preset = PLAYER_PRESETS[id % PLAYER_PRESETS.length]
+  const avatar = isAI ? AI_AVATARS[avatarIndex % AI_AVATARS.length] : preset.avatar
   return {
-    id, name, avatar: isAI ? (personality === 'aggressive' ? '🔥' : personality === 'conservative' ? '🛡️' : '🤖') : preset.avatar,
+    id, name, avatar,
     money: initialMoney, position: 0, properties: [], inJail: false, jailTurns: 0,
     bankrupt: false, isAI, aiPersonality: personality, color: preset.color,
     cards: [], freePassActive: false,
@@ -965,7 +968,7 @@ export function createGame(mode: 'ai' | 'local', playerCount: number, initialMon
     }
     const names = ['小火', '阿平', '老守']
     for (let i = 0; i < Math.min(playerCount, 3); i++) {
-      players.push(createPlayer(i + 1, names[i], true, personalityMap[difficulty], initialMoney))
+      players.push(createPlayer(i + 1, names[i], true, personalityMap[difficulty], initialMoney, i))
     }
   } else {
     const names = ['玩家1', '玩家2', '玩家3', '玩家4']

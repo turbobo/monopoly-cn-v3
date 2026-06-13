@@ -778,7 +778,7 @@ export default function MonopolyGame() {
     const players: Player[] = onlinePlayers.map((p, i) => ({
       id: i,
       name: p.name,
-      avatar: ['🧑', '🧑‍💻', '🧑‍🎨', '🧑‍🚀'][i % 4],
+      avatar: ['🧑', '🧑‍💻', '🧑‍🎨', '🧑‍🚀', '🎭', '🧠', '🔥', '🛡️'][i % 8],
       money: initialMoney,
       position: 0,
       properties: [],
