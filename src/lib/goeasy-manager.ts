@@ -92,8 +92,6 @@ export class GoEasyManager {
   private static readonly MAX_DEDUP_IDS = 200
   private static sdkInitialized: boolean = false
 
-  constructor() {}
-
   // 生成短房间号（6位字母数字）
   private generateShortId(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -368,8 +366,6 @@ export class GoEasyManager {
                 this.peerLastSeen.forEach((_val, key) => {
                   this.peerLastSeen.set(key, now)
                 })
-                this.reconnecting = false
-                this.reconnectAttempts = 0
                 // 重发队列中的消息
                 const queue = this.publishQueue.splice(0)
                 for (const msg of queue) {
@@ -463,11 +459,11 @@ export class GoEasyManager {
   }
 
   getConnectionCount(): number {
-    return 0 // GoEasy pub/sub 无内置成员计数
+    return this.peerLastSeen.size
   }
 
   getConnectedPeers(): string[] {
-    return []
+    return Array.from(this.peerLastSeen.keys())
   }
 
   getRoomId(): string {

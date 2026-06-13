@@ -28,8 +28,8 @@ export function trimMessages(msgs: string[], maxCount = 20): string[] {
  * 远程只发最近 N 条，本地保留完整历史，取并集。
  */
 export function mergeMessages(localMsgs: string[], remoteMsgs: string[]): string[] {
-  if (!localMsgs.length) return remoteMsgs
-  if (!remoteMsgs.length) return localMsgs
+  if (!localMsgs.length) return [...remoteMsgs]
+  if (!remoteMsgs.length) return [...localMsgs]
 
   // 从远程消息尾部向前查找本地最后一条消息的匹配位置
   // 从后向前搜索避免文本碰撞（同内容消息误匹配）
@@ -43,8 +43,9 @@ export function mergeMessages(localMsgs: string[], remoteMsgs: string[]): string
     return [...localMsgs, ...remoteMsgs.slice(overlapIdx + 1)]
   }
   if (overlapIdx === remoteMsgs.length - 1) {
-    return localMsgs
+    return [...localMsgs]
   }
-  // 无重叠：远程有全新消息批次，合并两者（保留本地历史）
-  return [...localMsgs, ...remoteMsgs]
+  // 无重叠：远程有全新消息批次，合并两者并去重
+  const localSet = new Set(localMsgs)
+  return [...localMsgs, ...remoteMsgs.filter(m => !localSet.has(m))]
 }

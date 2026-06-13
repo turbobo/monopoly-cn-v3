@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { BoardRenderer } from '@/lib/board-renderer'
 import {
   GameState, BOARD, BOARD_SIZE, Player, GameCard, CardType,
-  createGame, executeTurn, buyProperty, totalWealth,
+  createGame, executeTurn, buyProperty, totalWealth, getStartBonus,
   rollDice, finalizeTurn, nextPlayer, useRemoteDice, useSwapCard, useRoadblockCard,
   useFreePassCard, usePriceHikeCard, aiUseCardDecision,
 } from '@/lib/game-engine'
@@ -1269,7 +1269,7 @@ export default function MonopolyGame() {
 
             for (const msg of turnMessages) {
               if (msg.includes('购买')) playBuySound()
-              else if (msg.includes('支付')) playPaySound()
+              else if (msg.includes('支付') || msg.includes('缴纳')) playPaySound()
               else if (msg.includes('破产')) playBankruptSound()
             }
 
@@ -1306,14 +1306,16 @@ export default function MonopolyGame() {
     setDiceResult(null)
     setBuyPrompt(null)
     setPaused(false)
+    setSelectedCard(null)
+    setShowCardPanel(false)
   }
-
-  // ===== 退出在线房间 =====
   const leaveRoom = () => {
     if (buyTimeoutRef.current) {
       clearTimeout(buyTimeoutRef.current)
       buyTimeoutRef.current = null
     }
+    if (aiTimeoutRef.current) { clearTimeout(aiTimeoutRef.current); aiTimeoutRef.current = null }
+    if (guestRollTimeoutRef.current) { clearTimeout(guestRollTimeoutRef.current); guestRollTimeoutRef.current = null }
     animatingRef.current = false
     pendingDiceRolledRef.current = []
     forcedDiceRef.current = null
@@ -1341,6 +1343,8 @@ export default function MonopolyGame() {
     setDiceResult(null)
     setRolling(false)
     setIsMyTurn(false)
+    setSelectedCard(null)
+    setShowCardPanel(false)
   }
 
   return (
@@ -1532,7 +1536,7 @@ export default function MonopolyGame() {
                 )}
                 {tile.type === 'start' && (
                   <div className="text-[10px] text-gray-500 mt-2">
-                    经过或停留起点时获得 ¥{Math.round((game.players[0]?.money || 1500) * 0.15)} 工资
+                    经过或停留起点时获得 ¥{getStartBonus(game.round)} 工资
                   </div>
                 )}
                 {tile.type === 'parking' && (
@@ -1745,7 +1749,7 @@ export default function MonopolyGame() {
                 <div className="bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-center">
                   <div className="text-lg font-mono text-orange-400 font-bold break-all select-all cursor-pointer"
                     onClick={() => {
-                      navigator.clipboard.writeText(roomId)
+                      navigator.clipboard.writeText(roomId).catch(() => {})
                       setCopied(true)
                       setTimeout(() => setCopied(false), 1500)
                     }}>
@@ -1753,7 +1757,7 @@ export default function MonopolyGame() {
                   </div>
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(roomId)
+                      navigator.clipboard.writeText(roomId).catch(() => {})
                       setCopied(true)
                       setTimeout(() => setCopied(false), 1500)
                     }}
@@ -1859,7 +1863,7 @@ export default function MonopolyGame() {
                 🎉 游戏结束
               </h2>
               <p className="text-white text-xl font-bold mb-6">
-                {game.players.find(p => p.id === game.winner)?.name} 获胜！
+                {game.players.find(p => p.id === game.winner)?.name ?? '未知'} 获胜！
               </p>
 
               <div className="space-y-3 mb-6">

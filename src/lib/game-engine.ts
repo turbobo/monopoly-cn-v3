@@ -1,5 +1,9 @@
 // 大富翁中国行 - 核心游戏引擎
 
+// ===== 常量 =====
+const SELL_PRICE_RATIO = 0.6
+const JAIL_BAIL_COST = 50
+
 // ===== 类型定义 =====
 export type TileType = 'property' | 'railroad' | 'chance' | 'tax' | 'start' | 'jail' | 'parking' | 'goto_jail' | 'utility'
 
@@ -225,7 +229,7 @@ export function checkBankrupt(player: Player): { bankrupt: boolean; soldTiles: n
     // 尝试卖地（从最便宜的开始）
     const sorted = [...player.properties].sort((a, b) => BOARD[a].price - BOARD[b].price)
     for (const tileId of sorted) {
-      player.money += Math.floor(BOARD[tileId].price * 0.6)
+      player.money += Math.floor(BOARD[tileId].price * SELL_PRICE_RATIO)
       player.properties = player.properties.filter(id => id !== tileId)
       soldTiles.push(tileId)
       if (player.money >= 0) break
@@ -383,7 +387,7 @@ const CARD_POOL: Omit<GameCard, 'id'>[] = [
 ]
 
 export function generateCardId(): string {
-  return Math.random().toString(36).slice(2, 10)
+  return (Math.random().toString(36) + '00000000').slice(2, 10)
 }
 
 export function drawRandomCard(): GameCard {
@@ -673,7 +677,7 @@ export function executeTurn(gs: GameState, preRolledDice?: [number, number]): st
     player.jailTurns++
     // AI 出狱策略：根据性格决定是否主动支付保释金
     let aiPayBail = false
-    if (player.isAI && player.jailTurns < 3 && player.money >= 50) {
+    if (player.isAI && player.jailTurns < 3 && player.money >= JAIL_BAIL_COST) {
       const jp = player.aiPersonality || 'balanced'
       if (jp === 'aggressive' && player.jailTurns >= 1) aiPayBail = true
       else if (jp === 'balanced' && player.jailTurns >= 2) aiPayBail = true
@@ -682,7 +686,7 @@ export function executeTurn(gs: GameState, preRolledDice?: [number, number]): st
     if (player.jailTurns >= 3 || aiPayBail) {
       player.inJail = false
       player.jailTurns = 0
-      player.money -= 50 // 保释金
+      player.money -= JAIL_BAIL_COST // 保释金
       messages.push(`💰 ${player.name} 缴纳保释金 ¥50 出狱`)
     } else {
       const jailDice = preRolledDice || rollDice()
@@ -782,7 +786,7 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
       // 机会卡可能扣钱导致破产，立即检查
       const chanceBankrupt = checkBankrupt(player)
       for (const tileId of chanceBankrupt.soldTiles) {
-        messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
+        messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * SELL_PRICE_RATIO)}）`)
       }
       if (chanceBankrupt.bankrupt) {
         gs.roadblocks = gs.roadblocks.filter(r => r.ownerPlayerId !== player.id)
@@ -797,7 +801,7 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
       const owner = gs.players.find(p => p.properties.includes(tile.id))
       if (owner && owner.id !== player.id && !owner.bankrupt) {
         // 检查免费卡是否生效
-        const freePassActive = player.freePassActive || false
+        const freePassActive = player.freePassActive
         const rent = calculateRent(tile, owner, gs.players, gs.round, gs.priceHikes, freePassActive)
         if (freePassActive) {
           // 使用免费卡，免除租金
@@ -813,7 +817,7 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
           player.money -= rent
           const rentBankrupt = checkBankrupt(player)
           for (const tileId of rentBankrupt.soldTiles) {
-            messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
+            messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * SELL_PRICE_RATIO)}）`)
           }
           if (!rentBankrupt.bankrupt) {
             // 卖地后足以支付
@@ -861,7 +865,7 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
   // 检查破产（含卖地消息）
   const bankruptResult = checkBankrupt(player)
   for (const tileId of bankruptResult.soldTiles) {
-    messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
+    messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * SELL_PRICE_RATIO)}）`)
   }
   if (bankruptResult.bankrupt) {
     gs.roadblocks = gs.roadblocks.filter(r => r.ownerPlayerId !== player.id)
@@ -886,7 +890,7 @@ export function finalizeTurn(gs: GameState): string[] {
 
   const bankruptResult = checkBankrupt(player)
   for (const tileId of bankruptResult.soldTiles) {
-    messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
+    messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * SELL_PRICE_RATIO)}）`)
   }
   if (bankruptResult.bankrupt) {
     gs.roadblocks = gs.roadblocks.filter(r => r.ownerPlayerId !== player.id)
@@ -913,6 +917,11 @@ export function nextPlayer(gs: GameState) {
   while (gs.players[next].bankrupt && safety < len) {
     next = (next + 1) % len
     safety++
+  }
+  // 全员破产防御
+  if (safety >= len) {
+    gs.gameOver = true
+    return
   }
   // 回合数仅在"经过起点"时递增，跳过破产玩家不算新回合
   const wrappedAround = initialWrapped

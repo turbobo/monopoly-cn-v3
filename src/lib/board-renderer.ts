@@ -40,7 +40,7 @@ export class BoardRenderer {
   private tileSize: number = 0
   private cornerSize: number = 0
   private dpr: number = 1
-  private animId: number = 0
+  private animId: number = -1
   private time: number = 0
   private dt: number = 1
   private particles: Particle[] = []
@@ -340,7 +340,7 @@ export class BoardRenderer {
   // ===== 格子位置 =====
   private getTilePosition(index: number) {
     const s = this.size, cs = this.cornerSize, normal = (s - cs * 2) / 6
-    let x = 0, y = 0, w = 0, h = 0, side: any = 'bottom', isCorner = false
+    let x = 0, y = 0, w = 0, h = 0, side: 'bottom' | 'right' | 'top' | 'left' = 'bottom', isCorner = false
 
     if (index === 0) { x = s - cs; y = s - cs; w = cs; h = cs; isCorner = true }
     else if (index >= 1 && index <= 6) { const i = index - 1; x = s - cs - normal * (i + 1); y = s - cs; w = normal; h = cs }
@@ -357,7 +357,7 @@ export class BoardRenderer {
   // 将屏幕坐标转换为棋盘格子索引，未命中返回 -1
   hitTest(clientX: number, clientY: number): number {
     const rect = this.canvas.getBoundingClientRect()
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const dpr = this.dpr || Math.min(window.devicePixelRatio || 1, 2)
     const px = (clientX - rect.left) * dpr
     const py = (clientY - rect.top) * dpr
 
@@ -374,7 +374,7 @@ export class BoardRenderer {
   getTileScreenCenter(index: number): { x: number; y: number } | null {
     if (index < 0 || index >= BOARD_SIZE) return null
     const pos = this.getTilePosition(index)
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const dpr = this.dpr || Math.min(window.devicePixelRatio || 1, 2)
     const rect = this.canvas.getBoundingClientRect()
     return {
       x: rect.left + (pos.x + pos.w / 2) / dpr,
@@ -867,7 +867,7 @@ export class BoardRenderer {
     ctx.font = this.font(isCurrent ? 11 : 10, '"Noto Sans SC", sans-serif', 'bold')
     const cashW = ctx.measureText(cashText).width + this.px(8)
     ctx.fillStyle = 'rgba(0,0,0,0.7)'
-    this.roundedRect(tokenX - cashW / 2, cashY - 6, cashW, 12, 6)
+    this.roundedRect(tokenX - cashW / 2, cashY - this.px(6), cashW, this.px(12), this.px(6))
     ctx.fill()
     ctx.fillStyle = p.money > 500 ? '#4ade80' : p.money > 200 ? '#fbbf24' : '#ef4444'
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
@@ -907,7 +907,9 @@ export class BoardRenderer {
   }
 
   private darkenColor(hex: string, factor: number) {
-    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
+    let h = hex
+    if (h.length === 4) h = '#' + h[1] + h[1] + h[2] + h[2] + h[3] + h[3]
+    const r = parseInt(h.slice(1, 3), 16) || 0, g = parseInt(h.slice(3, 5), 16) || 0, b = parseInt(h.slice(5, 7), 16) || 0
     return `rgb(${Math.round(r * factor)},${Math.round(g * factor)},${Math.round(b * factor)})`
   }
 }
