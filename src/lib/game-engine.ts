@@ -436,10 +436,15 @@ export function useSwapCard(gs: GameState, userPlayerId: number, targetPlayerId:
 export function useRoadblockCard(gs: GameState, userPlayerId: number, tileId: number): string {
   const user = gs.players.find(p => p.id === userPlayerId)
   if (!user || user.bankrupt) return ''
+  if (!user.cards.some(c => c.type === 'roadblock')) return ''
   // 不允许在特殊格子上放置路障
   const tile = BOARD[tileId]
   if (['start', 'jail', 'parking', 'goto_jail'].includes(tile.type)) {
     return `❌ 不能在${tile.name}放置路障！`
+  }
+  // 不允许在同一格子重复放置路障
+  if (gs.roadblocks.some(r => r.tileId === tileId)) {
+    return `❌ ${tile.name}已有路障，不能重复放置！`
   }
   gs.roadblocks.push({ tileId, ownerPlayerId: userPlayerId })
   const cardIdx = user.cards.findIndex(c => c.type === 'roadblock')
@@ -451,6 +456,7 @@ export function useRoadblockCard(gs: GameState, userPlayerId: number, tileId: nu
 export function useFreePassCard(gs: GameState, userPlayerId: number): string {
   const user = gs.players.find(p => p.id === userPlayerId)
   if (!user || user.bankrupt) return ''
+  if (!user.cards.some(c => c.type === 'free_pass')) return ''
   user.freePassActive = true
   const cardIdx = user.cards.findIndex(c => c.type === 'free_pass')
   if (cardIdx >= 0) user.cards.splice(cardIdx, 1)
@@ -461,6 +467,7 @@ export function useFreePassCard(gs: GameState, userPlayerId: number): string {
 export function usePriceHikeCard(gs: GameState, userPlayerId: number, tileId: number): string {
   const user = gs.players.find(p => p.id === userPlayerId)
   if (!user || user.bankrupt) return ''
+  if (!user.cards.some(c => c.type === 'price_hike')) return ''
   if (!user.properties.includes(tileId)) return ''
   gs.priceHikes.push({ tileId, ownerPlayerId: userPlayerId, roundsLeft: 3 })
   const cardIdx = user.cards.findIndex(c => c.type === 'price_hike')
@@ -586,11 +593,12 @@ export function aiUseCardDecision(gs: GameState): { messages: string[]; forcedDi
     let targetSteps: number | null = null
 
     if (personality === 'aggressive') {
-      // 找2-12步内价格最高的无主地皮
+      // 找2-12步内价格最高的无主地皮（避开入狱格）
       let bestPrice = -1
       for (let steps = 2; steps <= 12; steps++) {
         const tileId = (player.position + steps) % BOARD_SIZE
         const tile = BOARD[tileId]
+        if (tile.type === 'goto_jail') continue  // 避免入狱
         if (tile.type !== 'property') continue
         const isOwned = gs.players.some(p => p.properties.includes(tileId))
         if (!isOwned && tile.price > bestPrice) {
@@ -622,8 +630,15 @@ export function aiUseCardDecision(gs: GameState): { messages: string[]; forcedDi
         let minRisk = Infinity
         for (let steps = 2; steps <= 12; steps++) {
           const tileId = (player.position + steps) % BOARD_SIZE
-          const owner = gs.players.find(p => p.properties.includes(tileId) && p.id !== player.id)
-          const risk = owner ? BOARD[tileId].price : 0
+          const tile = BOARD[tileId]
+          // 入狱格视为最高风险，税收格按税额计风险
+          let risk: number
+          if (tile.type === 'goto_jail') risk = Infinity
+          else if (tile.type === 'tax') risk = tile.name === '个人所得税' ? 100 : 150
+          else {
+            const owner = gs.players.find(p => p.properties.includes(tileId) && p.id !== player.id)
+            risk = owner ? tile.price : 0
+          }
           if (risk < minRisk) { minRisk = risk; safestSteps = steps }
         }
         // 只有真的有风险要规避时才用牌
@@ -770,6 +785,7 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
         messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
       }
       if (chanceBankrupt.bankrupt) {
+        gs.roadblocks = gs.roadblocks.filter(r => r.ownerPlayerId !== player.id)
         messages.push(`💀 ${player.name} 破产了！`)
       }
       break
@@ -805,9 +821,10 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
             messages.push(`💰 ${player.name} 向 ${owner.name} 支付租金 ¥${rent}`)
           } else {
             // 卖光全部地仍不足，将可支付部分全部给 owner
-            const paid = Math.max(0, rent + player.money) // player.money 此时 < 0，差额即未支付部分
+            const paid = Math.max(0, rent + player.money)
             owner.money += paid
             player.money = 0
+            gs.roadblocks = gs.roadblocks.filter(r => r.ownerPlayerId !== player.id)
             messages.push(`💸 ${player.name} 无力支付全额租金，将剩余 ¥${paid} 支付给 ${owner.name}`)
             messages.push(`💀 ${player.name} 破产了！`)
           }
@@ -816,8 +833,11 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
         // AI或玩家决定是否购买
         if (player.isAI) {
           if (aiDecision(player, tile, gs.difficulty, gs)) {
-            buyProperty(player, tile.id)
-            messages.push(`🏠 ${player.name} 购买了 ${tile.name}（¥${tile.price}）`)
+            if (buyProperty(player, tile.id)) {
+              messages.push(`🏠 ${player.name} 购买了 ${tile.name}（¥${tile.price}）`)
+            } else {
+              messages.push(`❌ ${player.name} 资金不足，无法购买 ${tile.name}（需要 ¥${tile.price}）`)
+            }
           } else {
             messages.push(`❌ ${player.name} 决定不买 ${tile.name}`)
           }
@@ -844,6 +864,7 @@ function processTile(gs: GameState, tile: Tile, messages: string[]): string[] {
     messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
   }
   if (bankruptResult.bankrupt) {
+    gs.roadblocks = gs.roadblocks.filter(r => r.ownerPlayerId !== player.id)
     messages.push(`💀 ${player.name} 破产了！`)
   }
 
@@ -868,6 +889,7 @@ export function finalizeTurn(gs: GameState): string[] {
     messages.push(`🏷️ ${player.name} 被迫卖出了 ${BOARD[tileId].name}（6折 ¥${Math.floor(BOARD[tileId].price * 0.6)}）`)
   }
   if (bankruptResult.bankrupt) {
+    gs.roadblocks = gs.roadblocks.filter(r => r.ownerPlayerId !== player.id)
     messages.push(`💀 ${player.name} 破产了！`)
   }
 

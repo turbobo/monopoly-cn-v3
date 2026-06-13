@@ -42,6 +42,7 @@ export class BoardRenderer {
   private dpr: number = 1
   private animId: number = 0
   private time: number = 0
+  private dt: number = 1
   private particles: Particle[] = []
   private floatingTexts: FloatingText[] = []
 
@@ -95,11 +96,18 @@ export class BoardRenderer {
     this.cornerSize = this.tileSize * 1.3
   }
 
+  private _lastTimestamp = 0
+
   start() {
-    const loop = () => {
-      this.time += 0.016
-      this.updateParticles()
-      this.updateMoveAnim()
+    this.stop()  // 防止重复创建 rAF 循环
+    this._lastTimestamp = 0
+    const loop = (timestamp: number) => {
+      const dt = this._lastTimestamp ? Math.min((timestamp - this._lastTimestamp) / 16.667, 3) : 1
+      this._lastTimestamp = timestamp
+      this.dt = dt
+      this.time += 0.016 * dt
+      this.updateParticles(dt)
+      this.updateMoveAnim(dt)
       this.draw()
       this.animId = requestAnimationFrame(loop)
     }
@@ -125,10 +133,10 @@ export class BoardRenderer {
     }
   }
 
-  private updateMoveAnim() {
+  private updateMoveAnim(dt: number = 1) {
     if (!this.moveAnim.active) return
     const m = this.moveAnim
-    m.progress += m.speed
+    m.progress += m.speed * dt
 
     if (m.progress >= 1) {
       m.currentTile = (m.currentTile + 1) % BOARD_SIZE
@@ -225,7 +233,7 @@ export class BoardRenderer {
       if (d.showResult > 0 && d.showResult < 1) d.showResult = Math.min(1, d.showResult + 0.04)
       return
     }
-    d.progress += 0.022 * (d.speedMultiplier || 1)
+    d.progress += 0.022 * (d.speedMultiplier || 1) * this.dt
 
     // 翻滚阶段：快速切换面值（越接近结束越慢）
     const shuffleRate = d.progress < 0.5 ? 0.6 : d.progress < 0.75 ? 0.35 : 0.12
@@ -265,9 +273,9 @@ export class BoardRenderer {
     }
   }
 
-  private updateParticles() {
+  private updateParticles(dt: number = 1) {
     this.particles = this.particles.filter(p => {
-      p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life++
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 0.05 * dt; p.life += dt
       p.alpha = Math.max(0, 1 - p.life / p.maxLife)
       return p.life < p.maxLife
     })
@@ -571,7 +579,7 @@ export class BoardRenderer {
         ctx.fill()
         ctx.strokeStyle = 'rgba(245,158,11,0.4)'
         ctx.lineWidth = 1.5
-        this.roundedRect(-textW / 2, -18, textW, 36, 18)
+        this.roundedRect(-textW / 2, -this.px(18), textW, this.px(36), this.px(18))
         ctx.stroke()
 
         // 数字
@@ -750,7 +758,7 @@ export class BoardRenderer {
     ctx.translate(x, y)
 
     // 阴影（根据高度变化大小）
-    const shadowScale = 1 - (25 - Math.abs(y - (this.getTilePosition(this.moveAnim.currentTile).y + this.getTilePosition(this.moveAnim.currentTile).h / 2 + 24))) / 50
+    const shadowScale = Math.max(0.1, 1 - (25 - Math.abs(y - (this.getTilePosition(this.moveAnim.currentTile).y + this.getTilePosition(this.moveAnim.currentTile).h / 2 + 24))) / 50)
     ctx.beginPath()
     ctx.ellipse(2, 20, r * shadowScale * 0.8, r * shadowScale * 0.3, 0, 0, Math.PI * 2)
     ctx.fillStyle = 'rgba(0,0,0,0.3)'
@@ -805,10 +813,10 @@ export class BoardRenderer {
       ctx.stroke()
 
       // 顶部指示箭头（向下指）
-      const arrowY = tokenY - r - 6
+      const arrowY = tokenY - r - this.px(6)
       ctx.beginPath()
-      ctx.moveTo(tokenX - 7, arrowY - 12)
-      ctx.lineTo(tokenX + 7, arrowY - 12)
+      ctx.moveTo(tokenX - this.px(7), arrowY - this.px(12))
+      ctx.lineTo(tokenX + this.px(7), arrowY - this.px(12))
       ctx.lineTo(tokenX, arrowY)
       ctx.closePath()
       ctx.fillStyle = p.color
@@ -870,7 +878,7 @@ export class BoardRenderer {
   private drawFloatingTexts() {
     const { ctx } = this
     this.floatingTexts = this.floatingTexts.filter(ft => {
-      ft.life++
+      ft.life += this.dt
       const progress = ft.life / ft.maxLife
       const alpha = progress < 0.2 ? progress / 0.2 : progress > 0.7 ? (1 - progress) / 0.3 : 1
       const floatY = ft.y - progress * 40

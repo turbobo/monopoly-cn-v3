@@ -5,7 +5,7 @@ import { BoardRenderer } from '@/lib/board-renderer'
 import {
   GameState, BOARD, BOARD_SIZE, Player, GameCard, CardType,
   createGame, executeTurn, buyProperty, totalWealth,
-  rollDice, finalizeTurn, useRemoteDice, useSwapCard, useRoadblockCard,
+  rollDice, finalizeTurn, nextPlayer, useRemoteDice, useSwapCard, useRoadblockCard,
   useFreePassCard, usePriceHikeCard, aiUseCardDecision,
 } from '@/lib/game-engine'
 import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, playPlayerJoinSound, playPlayerLeaveSound, setMuted } from '@/lib/sound'
@@ -520,7 +520,7 @@ export default function MonopolyGame() {
 
               // 遥控骰子：延迟 500ms 后自动执行掷骰
               if (autoRoll) {
-                setTimeout(() => executeHostRollRef.current(), 500)
+                aiTimeoutRef.current = setTimeout(() => executeHostRollRef.current(), 500)
               }
             }
           }
@@ -550,6 +550,14 @@ export default function MonopolyGame() {
             const isHostLeaving = playersRef.current.find(p => p.name === leaver)?.isHost
             if (isHostLeaving) {
               setConnectionError('房主已离开房间')
+              // Guest 清理并返回大厅
+              peerRef.current?.destroy()
+              peerRef.current = null
+              setScreen('setup')
+              setGame(null)
+              setOnlinePlayers([])
+              setOnlineRole(null)
+              setRoomId('')
             }
             // Guest 端也更新玩家列表（不依赖 room-info 延迟到达）
             const updated = playersRef.current.filter(p => p.name !== leaver)
@@ -604,32 +612,12 @@ export default function MonopolyGame() {
 
       // 如果断线的是当前玩家，跳过其回合
       if (newState.currentPlayer === playerIdx) {
-        // 推进到下一个玩家
-        let next = (newState.currentPlayer + 1) % newState.players.length
-        let safety = 0
-        while (newState.players[next].bankrupt && safety < newState.players.length) {
-          next = (next + 1) % newState.players.length
-          safety++
-        }
-        if (next <= newState.currentPlayer) newState.round++
-        newState.currentPlayer = next
-        newState.phase = 'roll'
-      }
-
-      // 检查游戏是否结束
-      const activePlayers = newState.players.filter(p => !p.bankrupt)
-      if (activePlayers.length <= 1) {
-        newState.gameOver = true
-        newState.winner = activePlayers[0]?.id ?? null
-        newMsgs.push(`🎉 游戏结束！${activePlayers[0]?.name} 获胜！`)
-      }
-
-      // 回合上限检查（maxRounds=0 表示无限/纯淘汰制）
-      if (newState.maxRounds > 0 && newState.round > newState.maxRounds && !newState.gameOver) {
-        newState.gameOver = true
-        const richest = [...newState.players].filter(p => !p.bankrupt).sort((a, b) => totalWealth(b) - totalWealth(a))
-        newState.winner = richest[0]?.id ?? null
-        newMsgs.push(`⏰ ${newState.maxRounds}回合结束！${richest[0]?.name} 以总资产最高获胜！`)
+        // 使用 nextPlayer 统一处理回合推进（含涨价卡递减、道具卡发放、回合上限）
+        const logBefore = newState.log.length
+        nextPlayer(newState)
+        // 提取 nextPlayer 产生的日志消息
+        const newLogMsgs = newState.log.slice(logBefore)
+        newMsgs.push(...newLogMsgs)
       }
 
       setMessages(newMsgs)
@@ -663,6 +651,14 @@ export default function MonopolyGame() {
         const disconnectedPeer = playersRef.current.find(p => p.id === peerId)
         if (disconnectedPeer?.isHost) {
           setConnectionError('房主已断开连接')
+          // Guest 清理并返回大厅
+          peerRef.current?.destroy()
+          peerRef.current = null
+          setScreen('setup')
+          setGame(null)
+          setOnlinePlayers([])
+          setOnlineRole(null)
+          setRoomId('')
         }
       }
     }
@@ -985,6 +981,7 @@ export default function MonopolyGame() {
         })
       }
       // 超时8秒后自动重置（兜底，防止卡死）
+      if (guestRollTimeoutRef.current) clearTimeout(guestRollTimeoutRef.current)
       guestRollTimeoutRef.current = setTimeout(() => {
         if (!animatingRef.current) setRolling(false)
       }, 8000)
@@ -1115,7 +1112,7 @@ export default function MonopolyGame() {
     if (mode === 'online' && onlineRole === 'host') {
       broadcastState(newState, newMsgs)
     } else if (!newState.gameOver) {
-      setTimeout(() => processAITurns(newState, []), 400)
+      setTimeout(() => processAITurns(newState, newMsgs), 400)
     }
   }, [mode, onlineRole, roomId, playerName, broadcastState])
 
@@ -1227,7 +1224,7 @@ export default function MonopolyGame() {
     // 遥控骰子：延迟后自动执行掷骰
     if (autoRoll) {
       const delay = mode === 'online' ? 500 : 300
-      setTimeout(() => {
+      aiTimeoutRef.current = setTimeout(() => {
         if (mode === 'online' && onlineRole === 'host') {
           executeHostRollRef.current()
         } else {
@@ -1301,6 +1298,7 @@ export default function MonopolyGame() {
     if (guestRollTimeoutRef.current) { clearTimeout(guestRollTimeoutRef.current); guestRollTimeoutRef.current = null }
     animatingRef.current = false
     pendingDiceRolledRef.current = []
+    forcedDiceRef.current = null
     setGameStarting(false)
     setScreen('setup')
     setGame(null)
@@ -1318,6 +1316,7 @@ export default function MonopolyGame() {
     }
     animatingRef.current = false
     pendingDiceRolledRef.current = []
+    forcedDiceRef.current = null
     setGameStarting(false)
     const peerToDestroy = peerRef.current
     if (peerToDestroy) {

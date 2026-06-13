@@ -88,6 +88,8 @@ export class GoEasyManager {
   private reconnectAttempts: number = 0
   private static readonly MAX_RECONNECT_ATTEMPTS = 5
   private publishQueue: string[] = []
+  private recentMsgIds: Set<string> = new Set()
+  private static readonly MAX_DEDUP_IDS = 200
   private static sdkInitialized: boolean = false
 
   constructor() {}
@@ -170,23 +172,27 @@ export class GoEasyManager {
     this.channel = `monopoly-${this.roomId}`
 
     return new Promise((resolve, reject) => {
+      let settled = false
       this.goeasy!.pubsub.subscribe({
         channel: this.channel,
         onMessage: (msg: { content: string }) => {
           this.handleIncomingMessage(msg.content)
         },
         onSuccess: () => {
+          if (settled) return; settled = true
           console.log('[GoEasyManager] Room created, channel:', this.channel)
+          this.startHeartbeat()
           resolve(this.roomId)
         },
         onFailed: (err: any) => {
+          if (settled) return; settled = true
           console.error('[GoEasyManager] Subscribe failed:', JSON.stringify(err), err)
           reject(new Error(`创建房间失败: ${JSON.stringify(err)}`))
         },
       })
       // 超时保护
       setTimeout(() => {
-        if (!this.channel) reject(new Error('创建房间超时'))
+        if (!settled) { settled = true; reject(new Error('创建房间超时')) }
       }, 15000)
     })
   }
@@ -221,6 +227,7 @@ export class GoEasyManager {
             timestamp: Date.now(),
           })
           this.connectionHandlers.forEach(h => h(roomId))
+          this.startHeartbeat()
           resolve()
         },
         onFailed: (err: any) => {
@@ -245,6 +252,16 @@ export class GoEasyManager {
 
     try {
       const data = JSON.parse(content) as PeerMessage
+
+      // 消息去重：用 from+timestamp+type 作为唯一标识
+      const msgId = `${data.from}|${data.timestamp}|${data.type}`
+      if (this.recentMsgIds.has(msgId)) return
+      this.recentMsgIds.add(msgId)
+      if (this.recentMsgIds.size > GoEasyManager.MAX_DEDUP_IDS) {
+        // 删除最早的条目
+        const first = this.recentMsgIds.values().next().value
+        if (first) this.recentMsgIds.delete(first)
+      }
 
       // 忽略自己发的消息
       if (data.from === this.clientId) return
@@ -346,6 +363,13 @@ export class GoEasyManager {
               },
               onSuccess: () => {
                 console.log('[GoEasyManager] Re-subscribed to', this.channel)
+                // 重连后重置所有对端的时间戳，防止误判断线
+                const now = Date.now()
+                this.peerLastSeen.forEach((_val, key) => {
+                  this.peerLastSeen.set(key, now)
+                })
+                this.reconnecting = false
+                this.reconnectAttempts = 0
                 // 重发队列中的消息
                 const queue = this.publishQueue.splice(0)
                 for (const msg of queue) {
