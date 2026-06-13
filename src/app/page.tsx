@@ -1525,8 +1525,21 @@ export default function MonopolyGame() {
                   </div>
                 )}
                 {tile.type === 'tax' && (
-                  <div className="text-[10px] text-gray-500 mt-2">
-                    停留时需缴纳固定税金
+                  <div className="text-[10px] text-gray-500 mt-2 space-y-0.5">
+                    {tile.name === '个人所得税' ? (
+                      <div>停留时缴纳固定税金 <span className="text-orange-400 font-medium">¥100</span></div>
+                    ) : (
+                      <>
+                        <div>停留时缴纳房产税：基础 ¥50 + 每块地 ¥20</div>
+                        <div>上限 ¥300</div>
+                        {(() => {
+                          const cp = game.players[game.currentPlayer]
+                          const count = cp?.properties?.length || 0
+                          const tax = Math.min(50 + count * 20, 300)
+                          return <div className="text-orange-400 font-medium">当前需缴：¥{tax}（你有 {count} 块地）</div>
+                        })()}
+                      </>
+                    )}
                   </div>
                 )}
                 {tile.type === 'goto_jail' && (
