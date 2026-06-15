@@ -148,10 +148,6 @@ export function createPlayer(id: number, name: string, isAI: boolean, personalit
 
 // ===== 计算租金（含回合加成 + 涨价卡 + 免费卡） =====
 export function calculateRent(tile: Tile, owner: Player, allPlayers: Player[], round: number = 1, priceHikes: { tileId: number; ownerPlayerId: number }[] = [], freePassActive: boolean = false): number {
-  if (tile.type === 'tax') {
-    return tile.name === '个人所得税' ? 100 : 150
-  }
-
   // 免费卡生效 → 租金为 0
   if (freePassActive) return 0
 
