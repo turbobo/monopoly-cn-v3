@@ -39,3 +39,76 @@ body { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -w
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 .animate-pulse { animation: pulse 1.5s infinite; }
+
+/* ===== 主菜单动画 ===== */
+
+/* 飘落粒子：emoji 从顶部缓缓飘落并旋转 */
+@keyframes float-down {
+  0% { transform: translateY(-60px) rotate(0deg); opacity: 0; }
+  10% { opacity: 0.7; }
+  90% { opacity: 0.5; }
+  100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
+}
+.menu-particle {
+  position: absolute;
+  font-size: 1.5rem;
+  pointer-events: none;
+  animation: float-down linear infinite;
+  will-change: transform;
+}
+
+/* 标题呼吸光效 */
+@keyframes glow-pulse {
+  0%, 100% { text-shadow: 0 0 20px rgba(251,191,36,0.3), 0 0 40px rgba(251,191,36,0.1); }
+  50% { text-shadow: 0 0 30px rgba(251,191,36,0.6), 0 0 60px rgba(251,191,36,0.3), 0 0 90px rgba(249,115,22,0.15); }
+}
+.glow-title { animation: glow-pulse 3s ease-in-out infinite; }
+
+/* 城市剪影微浮动 */
+@keyframes skyline-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.skyline { animation: skyline-float 4s ease-in-out infinite; }
+
+/* 按钮光扫 */
+@keyframes light-sweep {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+.btn-sweep {
+  position: relative;
+  overflow: hidden;
+}
+.btn-sweep::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  animation: light-sweep 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ===== 卡片翻转 ===== */
+@keyframes card-flip {
+  0% { transform: perspective(600px) rotateY(90deg) scale(0.8); opacity: 0; }
+  50% { transform: perspective(600px) rotateY(-10deg) scale(1.02); opacity: 1; }
+  100% { transform: perspective(600px) rotateY(0deg) scale(1); opacity: 1; }
+}
+.card-flip-in { animation: card-flip 0.5s ease-out forwards; }
+
+/* ===== 屏幕震动 ===== */
+@keyframes screen-shake {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-4px, -2px); }
+  20% { transform: translate(4px, 2px); }
+  30% { transform: translate(-3px, 3px); }
+  40% { transform: translate(3px, -3px); }
+  50% { transform: translate(-2px, 1px); }
+  60% { transform: translate(2px, -1px); }
+  70% { transform: translate(-1px, 2px); }
+  80% { transform: translate(1px, -2px); }
+  90% { transform: translate(-1px, -1px); }
+}
+.screen-shake { animation: screen-shake 0.5s ease-out; }

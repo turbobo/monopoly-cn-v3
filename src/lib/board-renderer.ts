@@ -33,6 +33,26 @@ interface MoveAnim {
   onStep: (() => void) | null
 }
 
+// 金币飞行粒子（收租动画）
+interface CoinParticle {
+  sx: number; sy: number; ex: number; ey: number  // 起点终点
+  cx1: number; cy1: number; cx2: number; cy2: number  // 贝塞尔控制点
+  progress: number; speed: number; delay: number
+  arrived: boolean
+}
+
+// 建筑升起动画
+interface BuildAnim {
+  tileIndex: number; color: string; emoji: string
+  progress: number; speed: number; settled: boolean; settleTimer: number
+}
+
+// 卡片全屏特效
+interface CardEffectAnim {
+  type: string; tileIndex?: number; tileIndex2?: number
+  progress: number; speed: number; active: boolean
+}
+
 export class BoardRenderer {
   private canvas: HTMLCanvasElement
   private ctx: CanvasRenderingContext2D
@@ -64,6 +84,12 @@ export class BoardRenderer {
     active: false, playerId: -1, fromTile: 0, currentTile: 0, targetTile: 0,
     stepsLeft: 0, progress: 0, speed: 0.039, color: '', avatar: '', onComplete: null, onStep: null,
   }
+
+  // 事件动画
+  private coinAnims: CoinParticle[] = []
+  private buildAnims: BuildAnim[] = []
+  private cardEffects: CardEffectAnim[] = []
+  private shakeTimer = 0
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -108,6 +134,10 @@ export class BoardRenderer {
       this.time += 0.016 * dt
       this.updateParticles(dt)
       this.updateMoveAnim(dt)
+      this.updateCoinAnims(dt)
+      this.updateBuildAnims(dt)
+      this.updateCardEffects(dt)
+      if (this.shakeTimer > 0) this.shakeTimer -= dt
       this.draw()
       this.animId = requestAnimationFrame(loop)
     }
@@ -294,6 +324,16 @@ export class BoardRenderer {
     const { ctx, size } = this
     ctx.clearRect(0, 0, size, size)
 
+    // 屏幕震动偏移
+    if (this.shakeTimer > 0) {
+      const intensity = this.shakeTimer * 3
+      ctx.save()
+      ctx.translate(
+        (Math.random() - 0.5) * intensity * 2,
+        (Math.random() - 0.5) * intensity * 2,
+      )
+    }
+
     // 高级深蓝背景（与设置界面一致）
     const bgGrad = ctx.createRadialGradient(size * 0.4, size * 0.35, 0, size / 2, size / 2, size * 0.75)
     bgGrad.addColorStop(0, '#243040')
@@ -334,7 +374,13 @@ export class BoardRenderer {
     if (usePlayers) this.drawPlayers(usePlayers)
     this.drawFloatingTexts()
     this.drawParticles()
+    this.drawCoinAnims()
+    this.drawBuildAnims()
+    this.drawCardEffects()
     this.updateDiceAnim()
+
+    // 屏幕震动恢复
+    if (this.shakeTimer > 0) ctx.restore()
   }
 
   // ===== 格子位置 =====
@@ -904,6 +950,309 @@ export class BoardRenderer {
       ctx.fillStyle = p.color + Math.round(p.alpha * 255).toString(16).padStart(2, '0')
       ctx.fill()
     }
+  }
+
+  // ===== 收租金币飞行动画 =====
+  playRentAnimation(fromTile: number, toTile: number, amount: number) {
+    const from = this.getTilePosition(fromTile)
+    const to = this.getTilePosition(toTile)
+    const sx = from.x + from.w / 2, sy = from.y + from.h / 2
+    const ex = to.x + to.w / 2, ey = to.y + to.h / 2
+    const count = Math.min(12, Math.max(6, Math.floor(amount / 100)))
+    for (let i = 0; i < count; i++) {
+      const offset = 80 + Math.random() * 60
+      this.coinAnims.push({
+        sx, sy, ex, ey,
+        cx1: sx + (Math.random() - 0.5) * offset * 2,
+        cy1: sy - offset - Math.random() * 40,
+        cx2: ex + (Math.random() - 0.5) * offset * 2,
+        cy2: ey - offset - Math.random() * 40,
+        progress: 0, speed: 0.018 + Math.random() * 0.008,
+        delay: i * 3 + Math.random() * 2,
+        arrived: false,
+      })
+    }
+    // 到达后显示 +¥xxx
+    this.showFloatingText(toTile, `+¥${amount}`, '#4ade80')
+  }
+
+  private updateCoinAnims(dt: number = 1) {
+    this.coinAnims = this.coinAnims.filter(c => {
+      if (c.delay > 0) { c.delay -= dt; return true }
+      c.progress += c.speed * dt
+      if (c.progress >= 1 && !c.arrived) {
+        c.arrived = true
+        // 到达时爆发小粒子
+        for (let i = 0; i < 4; i++) {
+          const angle = Math.random() * Math.PI * 2
+          this.particles.push({
+            x: c.ex, y: c.ey, vx: Math.cos(angle) * 2, vy: Math.sin(angle) * 2,
+            size: 2 + Math.random() * 2, alpha: 1, color: '#fbbf24', life: 0, maxLife: 20,
+          })
+        }
+        return false
+      }
+      return c.progress < 1.2
+    })
+  }
+
+  private drawCoinAnims() {
+    const { ctx } = this
+    for (const c of this.coinAnims) {
+      if (c.delay > 0 || c.progress <= 0) continue
+      const t = Math.min(c.progress, 1)
+      // 三次贝塞尔曲线
+      const mt = 1 - t
+      const x = mt*mt*mt*c.sx + 3*mt*mt*t*c.cx1 + 3*mt*t*t*c.cx2 + t*t*t*c.ex
+      const y = mt*mt*mt*c.sy + 3*mt*mt*t*c.cy1 + 3*mt*t*t*c.cy2 + t*t*t*c.ey
+      // 金币圆形 + 光泽
+      const r = this.px(5)
+      ctx.save()
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2)
+      const coinGrad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r)
+      coinGrad.addColorStop(0, '#ffe066')
+      coinGrad.addColorStop(0.7, '#f59e0b')
+      coinGrad.addColorStop(1, '#b45309')
+      ctx.fillStyle = coinGrad
+      ctx.fill()
+      // 拖尾
+      ctx.globalAlpha = 0.3
+      ctx.beginPath(); ctx.arc(x - (x - c.sx) * 0.05, y - (y - c.sy) * 0.05, r * 0.6, 0, Math.PI * 2)
+      ctx.fillStyle = '#fbbf24'
+      ctx.fill()
+      ctx.restore()
+    }
+  }
+
+  // ===== 买地建筑升起动画 =====
+  playBuildAnimation(tileIndex: number, ownerColor: string) {
+    const emojis = ['🏠', '🏢', '🏬']
+    this.buildAnims.push({
+      tileIndex, color: ownerColor,
+      emoji: emojis[Math.floor(Math.random() * emojis.length)],
+      progress: 0, speed: 0.025, settled: false, settleTimer: 0,
+    })
+  }
+
+  private updateBuildAnims(dt: number = 1) {
+    this.buildAnims = this.buildAnims.filter(b => {
+      if (b.settled) {
+        b.settleTimer -= dt
+        return b.settleTimer > 0
+      }
+      b.progress += b.speed * dt
+      if (b.progress >= 1) {
+        b.progress = 1
+        b.settled = true
+        b.settleTimer = 60  // 保持约1秒
+        // 落地尘土
+        const pos = this.getTilePosition(b.tileIndex)
+        const cx = pos.x + pos.w / 2, cy = pos.y + pos.h
+        for (let i = 0; i < 6; i++) {
+          const angle = -Math.PI * 0.2 - Math.random() * Math.PI * 0.6
+          this.particles.push({
+            x: cx + (Math.random() - 0.5) * pos.w * 0.6, y: cy,
+            vx: Math.cos(angle) * (1 + Math.random()), vy: Math.sin(angle) * (1 + Math.random()),
+            size: 2 + Math.random() * 2, alpha: 0.8, color: '#a8a29e', life: 0, maxLife: 25,
+          })
+        }
+      }
+      return true
+    })
+  }
+
+  private drawBuildAnims() {
+    const { ctx } = this
+    for (const b of this.buildAnims) {
+      const pos = this.getTilePosition(b.tileIndex)
+      const cx = pos.x + pos.w / 2, baseY = pos.y + pos.h * 0.7
+      // easeOutBack 弹跳升起
+      const t = b.progress
+      const c1 = 1.70158, c3 = c1 + 1
+      const eased = t < 1 ? 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2) : 1
+      const riseH = pos.h * 0.5
+      const y = baseY - eased * riseH
+      const scale = b.settled ? 1 : 0.8 + eased * 0.2
+
+      ctx.save()
+      ctx.globalAlpha = b.settled ? Math.min(b.settleTimer / 20, 1) : 1
+      ctx.font = this.font(Math.round(18 * scale))
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText(b.emoji, cx, y)
+      ctx.restore()
+    }
+  }
+
+  // ===== 破产爆炸动画 =====
+  playBankruptAnimation(tileIndex: number, _color: string) {
+    const pos = this.getTilePosition(tileIndex)
+    const cx = pos.x + pos.w / 2, cy = pos.y + pos.h / 2
+    // 大量红/橙粒子爆发
+    for (let i = 0; i < 30; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const speed = 2 + Math.random() * 4
+      this.particles.push({
+        x: cx, y: cy, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        size: 3 + Math.random() * 4, alpha: 1,
+        color: Math.random() > 0.5 ? '#ef4444' : '#f97316',
+        life: 0, maxLife: 40 + Math.random() * 20,
+      })
+    }
+    // 屏幕震动
+    this.shakeTimer = 12
+    // 浮动文字
+    this.showFloatingText(tileIndex, '破产！', '#ef4444')
+  }
+
+  // ===== 卡片全屏特效 =====
+  playCardEffect(type: string, tileIndex?: number, tileIndex2?: number) {
+    this.cardEffects.push({
+      type, tileIndex, tileIndex2,
+      progress: 0, speed: 0.02, active: true,
+    })
+  }
+
+  private updateCardEffects(dt: number = 1) {
+    this.cardEffects = this.cardEffects.filter(e => {
+      e.progress += e.speed * dt
+      if (e.progress >= 1) { e.active = false; return false }
+      return true
+    })
+  }
+
+  private drawCardEffects() {
+    const { ctx, size } = this
+    for (const e of this.cardEffects) {
+      const t = e.progress
+      const cx = size / 2, cy = size / 2
+
+      ctx.save()
+
+      switch (e.type) {
+        case 'remote_dice': {
+          // 瞄准镜动画：中心十字准星 + 脉冲环
+          const alpha = t < 0.3 ? t / 0.3 : t > 0.7 ? (1 - t) / 0.3 : 1
+          ctx.globalAlpha = alpha * 0.7
+          ctx.strokeStyle = '#f97316'
+          ctx.lineWidth = this.px(2)
+          // 十字线
+          const len = 40 + t * 20
+          ctx.beginPath()
+          ctx.moveTo(cx - len, cy + 55); ctx.lineTo(cx + len, cy + 55)
+          ctx.moveTo(cx, cy + 55 - len); ctx.lineTo(cx, cy + 55 + len)
+          ctx.stroke()
+          // 脉冲环
+          const ringR = 30 + t * 30
+          ctx.beginPath(); ctx.arc(cx, cy + 55, ringR, 0, Math.PI * 2)
+          ctx.stroke()
+          // 中心点
+          ctx.fillStyle = '#f97316'
+          ctx.beginPath(); ctx.arc(cx, cy + 55, 4, 0, Math.PI * 2)
+          ctx.fill()
+          break
+        }
+        case 'roadblock': {
+          if (e.tileIndex === undefined) break
+          const pos = this.getTilePosition(e.tileIndex)
+          const tx = pos.x + pos.w / 2, baseY = pos.y + pos.h * 0.7
+          // 路障从上方落下
+          const fallT = Math.min(t * 2, 1)
+          const bounce = fallT >= 1 ? Math.sin((t - 0.5) * 8) * (1 - t) * 8 : 0
+          const dropY = -50
+          const y = dropY + (baseY - dropY) * this.easeOutBounce(fallT) + bounce
+          ctx.font = this.font(22)
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+          ctx.globalAlpha = t < 0.8 ? 1 : (1 - t) / 0.2
+          ctx.fillText('🚧', tx, y)
+          // 落地冲击波环
+          if (fallT >= 1) {
+            const ringProgress = (t - 0.5) * 2
+            ctx.globalAlpha = Math.max(0, 1 - ringProgress) * 0.5
+            ctx.strokeStyle = '#f97316'
+            ctx.lineWidth = this.px(2)
+            ctx.beginPath()
+            ctx.arc(tx, baseY, ringProgress * 30, 0, Math.PI * 2)
+            ctx.stroke()
+          }
+          break
+        }
+        case 'swap': {
+          if (e.tileIndex === undefined || e.tileIndex2 === undefined) break
+          const pos1 = this.getTilePosition(e.tileIndex)
+          const pos2 = this.getTilePosition(e.tileIndex2)
+          const x1 = pos1.x + pos1.w / 2, y1 = pos1.y + pos1.h / 2
+          const x2 = pos2.x + pos2.w / 2, y2 = pos2.y + pos2.h / 2
+          // 闪烁虚线连接两点
+          ctx.globalAlpha = 0.6 * (t < 0.7 ? 1 : (1 - t) / 0.3)
+          ctx.strokeStyle = '#a78bfa'
+          ctx.lineWidth = this.px(2)
+          ctx.setLineDash([this.px(6), this.px(4)])
+          ctx.lineDashOffset = -this.time * 80
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2)
+          ctx.stroke()
+          ctx.setLineDash([])
+          // 两端光圈
+          const pulseR = 15 + Math.sin(this.time * 8) * 5
+          ctx.strokeStyle = '#a78bfa'
+          ctx.beginPath(); ctx.arc(x1, y1, pulseR, 0, Math.PI * 2); ctx.stroke()
+          ctx.beginPath(); ctx.arc(x2, y2, pulseR, 0, Math.PI * 2); ctx.stroke()
+          break
+        }
+        case 'free_pass': {
+          if (e.tileIndex === undefined) break
+          const pos = this.getTilePosition(e.tileIndex)
+          const tx = pos.x + pos.w / 2, ty = pos.y + pos.h / 2
+          // 护盾光环
+          ctx.globalAlpha = 0.5 * (t < 0.6 ? 1 : (1 - t) / 0.4)
+          const shieldR = 20 + t * 10
+          const shieldGrad = ctx.createRadialGradient(tx, ty, shieldR * 0.3, tx, ty, shieldR)
+          shieldGrad.addColorStop(0, 'rgba(59,130,246,0.4)')
+          shieldGrad.addColorStop(0.7, 'rgba(59,130,246,0.15)')
+          shieldGrad.addColorStop(1, 'rgba(59,130,246,0)')
+          ctx.fillStyle = shieldGrad
+          ctx.beginPath(); ctx.arc(tx, ty, shieldR, 0, Math.PI * 2)
+          ctx.fill()
+          // 盾牌边框
+          ctx.strokeStyle = '#3b82f6'
+          ctx.lineWidth = this.px(2)
+          ctx.beginPath(); ctx.arc(tx, ty, shieldR, 0, Math.PI * 2)
+          ctx.stroke()
+          break
+        }
+        case 'price_hike': {
+          if (e.tileIndex === undefined) break
+          const pos = this.getTilePosition(e.tileIndex)
+          const tx = pos.x + pos.w / 2, ty = pos.y + pos.h / 2
+          // 金色脉冲光晕
+          const pulseAlpha = Math.sin(t * Math.PI * 3) * 0.5
+          ctx.globalAlpha = Math.abs(pulseAlpha) * (t < 0.8 ? 1 : (1 - t) / 0.2)
+          const glowR = pos.w * 0.6 + t * 10
+          const glowGrad = ctx.createRadialGradient(tx, ty, 0, tx, ty, glowR)
+          glowGrad.addColorStop(0, 'rgba(251,191,36,0.5)')
+          glowGrad.addColorStop(1, 'rgba(251,191,36,0)')
+          ctx.fillStyle = glowGrad
+          ctx.beginPath(); ctx.arc(tx, ty, glowR, 0, Math.PI * 2)
+          ctx.fill()
+          // 上升箭头
+          ctx.globalAlpha = t < 0.7 ? 1 : (1 - t) / 0.3
+          ctx.font = this.font(16)
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+          ctx.fillStyle = '#fbbf24'
+          ctx.fillText('📈', tx, ty - 15 - t * 20)
+          break
+        }
+      }
+      ctx.restore()
+    }
+  }
+
+  // 弹跳缓动函数
+  private easeOutBounce(x: number): number {
+    const n1 = 7.5625, d1 = 2.75
+    if (x < 1 / d1) return n1 * x * x
+    if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75
+    if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375
+    return n1 * (x -= 2.625 / d1) * x + 0.984375
   }
 
   private darkenColor(hex: string, factor: number) {

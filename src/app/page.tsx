@@ -1021,6 +1021,29 @@ export default function MonopolyGame() {
             else if (msg.includes('破产')) playBankruptSound()
           }
 
+          // 事件动画触发
+          const renderer = rendererRef.current
+          const currentAfterTurn = newState.players[newState.currentPlayer]
+          if (renderer && currentAfterTurn) {
+            const tileIdx = currentAfterTurn.position
+            for (const msg of turnMessages) {
+              const rentMatch = msg.match(/向\s*(\S+)\s*支付租金\s*¥(\d+)/)
+              if (rentMatch) {
+                const ownerName = rentMatch[1]
+                const amount = parseInt(rentMatch[2])
+                const ownerPlayer = newState.players.find(p => p.name === ownerName)
+                if (ownerPlayer) renderer.playRentAnimation(tileIdx, ownerPlayer.position, amount)
+              }
+              if (msg.includes('破产了')) {
+                renderer.playBankruptAnimation(tileIdx, currentAfterTurn.color)
+              }
+              const taxMatch = msg.match(/缴纳.*¥(\d+)/)
+              if (taxMatch && !msg.includes('保释金')) {
+                renderer.showFloatingText(tileIdx, `-¥${taxMatch[1]}`, '#ef4444')
+              }
+            }
+          }
+
           setMessages(newMsgs)
           setGame(newState)
           gameRef.current = newState
@@ -1086,6 +1109,8 @@ export default function MonopolyGame() {
       if (buyProperty(player, tile.id)) {
         newMsgs.push(`🏠 ${player.name} 购买了 ${tile.name}`)
         playBuySound()
+        // 买地建筑升起动画
+        rendererRef.current?.playBuildAnimation(player.position, player.color)
       } else {
         newMsgs.push(`❌ ${player.name} 资金不足，无法购买 ${tile.name}（需要 ¥${tile.price}）`)
       }
@@ -1213,6 +1238,37 @@ export default function MonopolyGame() {
       setMessages(newMsgs)
       setGame(newState)
       gameRef.current = newState
+
+      // 卡片释放全屏特效
+      const renderer = rendererRef.current
+      if (renderer) {
+        switch (card.type) {
+          case 'remote_dice':
+            renderer.playCardEffect('remote_dice')
+            break
+          case 'swap': {
+            const targetP = newState.players.find(p => p.id === target?.playerIdx)
+            if (targetP) {
+              renderer.playCardEffect('swap', player.position, targetP.position)
+            }
+            break
+          }
+          case 'roadblock':
+            if (target?.tileId !== undefined) {
+              renderer.playCardEffect('roadblock', target.tileId)
+            }
+            break
+          case 'free_pass':
+            renderer.playCardEffect('free_pass', player.position)
+            break
+          case 'price_hike':
+            if (target?.tileId !== undefined) {
+              renderer.playCardEffect('price_hike', target.tileId)
+            }
+            break
+        }
+      }
+
       if (mode === 'online' && onlineRole === 'host') {
         broadcastState(newState, newMsgs)
       }
@@ -1564,15 +1620,35 @@ export default function MonopolyGame() {
 
         {/* 主菜单 */}
         {screen === 'menu' && (
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-20">
-            <div className="text-center fade-in">
-              <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-orange-400 to-red-400 mb-3">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-20 overflow-hidden">
+            {/* 飘落粒子背景 */}
+            {['🎲','💰','🏠','🃏','⭐','🎯','💎','🏆','🎲','💰','⭐','🃏'].map((emoji, i) => (
+              <span key={i} className="menu-particle"
+                style={{
+                  left: `${8 + (i * 7.5) % 85}%`,
+                  animationDuration: `${8 + (i % 5) * 2}s`,
+                  animationDelay: `${(i * 0.8) % 6}s`,
+                  opacity: 0.5,
+                }}
+              >{emoji}</span>
+            ))}
+
+            {/* 底部城市剪影 */}
+            <div className="skyline absolute bottom-0 left-0 right-0 h-20 opacity-20"
+              style={{
+                background: 'linear-gradient(to top, #f97316 0%, transparent 100%)',
+                clipPath: 'polygon(0% 100%, 0% 80%, 3% 60%, 6% 80%, 10% 40%, 13% 60%, 16% 80%, 20% 30%, 23% 50%, 26% 70%, 30% 20%, 33% 50%, 36% 80%, 40% 50%, 43% 30%, 46% 60%, 50% 10%, 53% 40%, 56% 70%, 60% 40%, 63% 20%, 66% 50%, 70% 70%, 73% 30%, 76% 60%, 80% 40%, 83% 70%, 86% 50%, 90% 80%, 93% 60%, 96% 40%, 100% 70%, 100% 100%)',
+              }}
+            />
+
+            <div className="text-center fade-in relative z-10">
+              <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-orange-400 to-red-400 mb-3 glow-title">
                 大富翁
               </h1>
               <p className="text-xl text-orange-300 mb-10 font-medium">中国行 · 在线版</p>
               <button
                 onClick={() => setScreen('setup')}
-                className="px-10 py-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-full text-white font-bold text-lg hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 hover:scale-105"
+                className="btn-sweep px-10 py-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-full text-white font-bold text-lg hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 hover:scale-105"
               >
                 开始游戏
               </button>
@@ -2079,7 +2155,7 @@ export default function MonopolyGame() {
               </div>
             )}
             {selectedCard ? (
-              <div className="bounce-in">
+              <div className="card-flip-in">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xl">{selectedCard.emoji}</span>
                   <span className="text-gray-100 font-bold">{selectedCard.name}</span>
