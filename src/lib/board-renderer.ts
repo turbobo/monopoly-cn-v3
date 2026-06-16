@@ -53,6 +53,15 @@ interface CardEffectAnim {
   progress: number; speed: number; active: boolean
 }
 
+// NPC 入场动画
+interface NPCAnim {
+  type: 'god_wealth' | 'god_poverty' | 'police' | 'dog'
+  tileIndex: number
+  progress: number    // 0→1 入场, 1→2 表演, 2→3 离场
+  speed: number
+  emoji: string
+}
+
 export class BoardRenderer {
   private canvas: HTMLCanvasElement
   private ctx: CanvasRenderingContext2D
@@ -90,6 +99,7 @@ export class BoardRenderer {
   private buildAnims: BuildAnim[] = []
   private cardEffects: CardEffectAnim[] = []
   private shakeTimer = 0
+  private npcAnims: NPCAnim[] = []
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -137,6 +147,7 @@ export class BoardRenderer {
       this.updateCoinAnims(dt)
       this.updateBuildAnims(dt)
       this.updateCardEffects(dt)
+      this.updateNPCAnims(dt)
       if (this.shakeTimer > 0) this.shakeTimer -= dt
       this.draw()
       this.animId = requestAnimationFrame(loop)
@@ -377,6 +388,7 @@ export class BoardRenderer {
     this.drawCoinAnims()
     this.drawBuildAnims()
     this.drawCardEffects()
+    this.drawNPCAnims()
     this.updateDiceAnim()
 
     // 屏幕震动恢复
@@ -1253,6 +1265,213 @@ export class BoardRenderer {
     if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75
     if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375
     return n1 * (x -= 2.625 / d1) * x + 0.984375
+  }
+
+  // ===== NPC 入场动画 =====
+  private static readonly NPC_MAP: Record<string, string> = {
+    god_wealth: '🤑', god_poverty: '👻', police: '👮', dog: '🐕',
+  }
+
+  spawnNPC(type: string, tileIndex: number) {
+    const emoji = BoardRenderer.NPC_MAP[type] || '❓'
+    this.npcAnims.push({
+      type: type as NPCAnim['type'],
+      tileIndex, progress: 0, speed: 0.018, emoji,
+    })
+  }
+
+  private updateNPCAnims(dt: number = 1) {
+    this.npcAnims = this.npcAnims.filter(n => {
+      n.progress += n.speed * dt
+      // 表演阶段产生持续粒子
+      if (n.progress >= 1 && n.progress < 2) {
+        const pos = this.getTilePosition(n.tileIndex)
+        const cx = pos.x + pos.w / 2, cy = pos.y + pos.h / 2
+        this.spawnNPCParticles(n.type, cx, cy, dt)
+      }
+      return n.progress < 3
+    })
+  }
+
+  private spawnNPCParticles(type: string, cx: number, cy: number, dt: number) {
+    if (Math.random() > 0.3 * dt) return
+    switch (type) {
+      case 'god_wealth':
+        this.particles.push({
+          x: cx + (Math.random() - 0.5) * 30, y: cy,
+          vx: (Math.random() - 0.5) * 1.5, vy: -1 - Math.random() * 2,
+          size: 2 + Math.random() * 3, alpha: 1, color: '#fbbf24', life: 0, maxLife: 30,
+        })
+        break
+      case 'god_poverty':
+        this.particles.push({
+          x: cx + (Math.random() - 0.5) * 25, y: cy + 10,
+          vx: (Math.random() - 0.5) * 0.5, vy: 0.5 + Math.random(),
+          size: 2 + Math.random() * 2, alpha: 0.7, color: '#78716c', life: 0, maxLife: 25,
+        })
+        break
+      case 'police':
+        this.particles.push({
+          x: cx + (Math.random() - 0.5) * 20, y: cy + (Math.random() - 0.5) * 20,
+          vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2,
+          size: 1.5 + Math.random() * 2, alpha: 1,
+          color: Math.random() > 0.5 ? '#3b82f6' : '#ef4444', life: 0, maxLife: 15,
+        })
+        break
+      case 'dog':
+        this.particles.push({
+          x: cx + (Math.random() - 0.5) * 15, y: cy,
+          vx: (Math.random() - 0.5) * 3, vy: -Math.random() * 1.5,
+          size: 2 + Math.random() * 2, alpha: 1, color: '#ef4444', life: 0, maxLife: 18,
+        })
+        break
+    }
+  }
+
+  private drawNPCAnims() {
+    const { ctx, size } = this
+    const centerX = size / 2, centerY = size / 2
+
+    for (const n of this.npcAnims) {
+      const pos = this.getTilePosition(n.tileIndex)
+      const tx = pos.x + pos.w / 2, ty = pos.y + pos.h / 2
+      const p = n.progress
+
+      ctx.save()
+
+      if (p < 1) {
+        // === 入场阶段：从棋盘中心沿弧线飘入目标格子 ===
+        const t = p
+        const eased = this.easeOutBack(t)
+        // 起始点：棋盘中心偏上方
+        const sx = centerX + (Math.random() * 0.01 - 0.005)  // 微抖动
+        const sy = centerY - 20
+        const x = sx + (tx - sx) * eased
+        const y = sy + (ty - sy) * eased - Math.sin(t * Math.PI) * 40  // 弧线
+        const scale = 0.3 + eased * 0.9
+        const alpha = Math.min(t * 2, 1)
+
+        ctx.globalAlpha = alpha
+        ctx.font = this.font(Math.round(28 * scale))
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.fillText(n.emoji, x, y)
+
+        // 入场拖尾
+        ctx.globalAlpha = alpha * 0.2
+        ctx.font = this.font(Math.round(20 * scale))
+        ctx.fillText(n.emoji, x - (x - sx) * 0.08, y - (y - sy) * 0.08)
+      } else if (p < 2) {
+        // === 表演阶段：停在格子中心 + 类型特有特效 ===
+        const t = p - 1
+        const bob = Math.sin(t * Math.PI * 4) * 3  // 上下浮动
+
+        ctx.font = this.font(30)
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.fillText(n.emoji, tx, ty + bob)
+
+        // 类型特效
+        switch (n.type) {
+          case 'god_wealth': {
+            // 金色光环脉冲
+            const glowR = 25 + Math.sin(t * Math.PI * 3) * 8
+            ctx.globalAlpha = 0.25 + Math.sin(t * Math.PI * 3) * 0.15
+            const grad = ctx.createRadialGradient(tx, ty, 0, tx, ty, glowR)
+            grad.addColorStop(0, 'rgba(251,191,36,0.5)')
+            grad.addColorStop(1, 'rgba(251,191,36,0)')
+            ctx.fillStyle = grad
+            ctx.beginPath(); ctx.arc(tx, ty, glowR, 0, Math.PI * 2); ctx.fill()
+            break
+          }
+          case 'god_poverty': {
+            // 灰色烟雾扩散
+            const smokeR = 20 + t * 25
+            ctx.globalAlpha = Math.max(0, 0.3 - t * 0.15)
+            const grad = ctx.createRadialGradient(tx, ty, 0, tx, ty, smokeR)
+            grad.addColorStop(0, 'rgba(120,113,108,0.4)')
+            grad.addColorStop(1, 'rgba(120,113,108,0)')
+            ctx.fillStyle = grad
+            ctx.beginPath(); ctx.arc(tx, ty, smokeR, 0, Math.PI * 2); ctx.fill()
+            break
+          }
+          case 'police': {
+            // 红蓝交替警灯环
+            const isBlue = Math.sin(t * Math.PI * 8) > 0
+            const ringR = 22 + Math.sin(t * Math.PI * 6) * 5
+            ctx.globalAlpha = 0.5
+            ctx.strokeStyle = isBlue ? '#3b82f6' : '#ef4444'
+            ctx.lineWidth = this.px(3)
+            ctx.beginPath(); ctx.arc(tx, ty, ringR, 0, Math.PI * 2); ctx.stroke()
+            // 第二环反色
+            ctx.strokeStyle = isBlue ? '#ef4444' : '#3b82f6'
+            ctx.globalAlpha = 0.3
+            ctx.beginPath(); ctx.arc(tx, ty, ringR * 0.6, 0, Math.PI * 2); ctx.stroke()
+            break
+          }
+          case 'dog': {
+            // 左右摇晃 + 锯齿撕咬线
+            const shakeX = Math.sin(t * Math.PI * 12) * 6
+            ctx.font = this.font(30)
+            ctx.clearRect(tx - 20, ty - 20, 40, 40)
+            ctx.fillText(n.emoji, tx + shakeX, ty)
+            // 锯齿线
+            ctx.globalAlpha = 0.6 * (1 - t)
+            ctx.strokeStyle = '#ef4444'
+            ctx.lineWidth = this.px(2)
+            ctx.beginPath()
+            for (let i = 0; i < 5; i++) {
+              const sx = tx - 15 + i * 7.5
+              const sy = ty + 15 + (i % 2 === 0 ? -5 : 5)
+              if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy)
+            }
+            ctx.stroke()
+            break
+          }
+        }
+
+        // 浮动文字标签（表演阶段前半段显示）
+        if (t < 0.5) {
+          const labelAlpha = t < 0.15 ? t / 0.15 : t > 0.35 ? (0.5 - t) / 0.15 : 1
+          ctx.globalAlpha = labelAlpha
+          const labels: Record<string, { text: string; color: string }> = {
+            god_wealth: { text: '财神赐福', color: '#fbbf24' },
+            god_poverty: { text: '破财消灾', color: '#78716c' },
+            police: { text: '逮捕！', color: '#3b82f6' },
+            dog: { text: '汪！咬你！', color: '#ef4444' },
+          }
+          const label = labels[n.type]
+          if (label) {
+            ctx.font = this.font(14, '"Noto Sans SC", sans-serif', 'bold')
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'
+            const tw = ctx.measureText(label.text).width
+            this.roundedRect(tx - tw / 2 - 8, ty - 35, tw + 16, 20, 10)
+            ctx.fill()
+            ctx.fillStyle = label.color
+            ctx.fillText(label.text, tx, ty - 25)
+          }
+        }
+      } else {
+        // === 离场阶段：缩小淡出 + 向棋盘中心飘走 ===
+        const t = p - 2
+        const scale = 1 - t * 0.7
+        const alpha = 1 - t
+        const ex = tx + (centerX - tx) * t * 0.3
+        const ey = ty + (centerY - ty) * t * 0.3 - t * 15
+
+        ctx.globalAlpha = Math.max(0, alpha)
+        ctx.font = this.font(Math.round(28 * Math.max(0.3, scale)))
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.fillText(n.emoji, ex, ey)
+      }
+
+      ctx.restore()
+    }
+  }
+
+  // easeOutBack 缓动
+  private easeOutBack(x: number): number {
+    const c1 = 1.70158, c3 = c1 + 1
+    return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2)
   }
 
   private darkenColor(hex: string, factor: number) {

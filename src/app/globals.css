@@ -112,3 +112,15 @@ body { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -w
   90% { transform: translate(-1px, -1px); }
 }
 .screen-shake { animation: screen-shake 0.5s ease-out; }
+
+/* ===== 回合切换过渡 ===== */
+@keyframes slide-out-left {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(-100%); opacity: 0; }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.turn-slide-out { animation: slide-out-left 0.3s ease-in forwards; }
+.turn-slide-in { animation: slide-in-right 0.3s ease-out forwards; }

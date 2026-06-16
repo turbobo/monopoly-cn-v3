@@ -61,6 +61,10 @@ export default function MonopolyGame() {
   const [showCardPanel, setShowCardPanel] = useState(false)
   const [tileInfo, setTileInfo] = useState<{ tileIndex: number; x: number; y: number } | null>(null)
 
+  // 回合切换过渡动画
+  const [turnAnim, setTurnAnim] = useState<'idle' | 'out' | 'in'>('idle')
+  const prevPlayerRef = useRef<number>(-1)
+
   // 在线模式状态
   const [onlineRole, setOnlineRole] = useState<OnlineRole>(null)
   const [playerName, setPlayerName] = useState(() => {
@@ -89,6 +93,19 @@ export default function MonopolyGame() {
   useEffect(() => { playersRef.current = onlinePlayers }, [onlinePlayers])
   useEffect(() => { screenRef.current = screen }, [screen])
   useEffect(() => { buyPromptRef.current = buyPrompt }, [buyPrompt])
+
+  // 回合切换过渡动画（仅本地/AI模式）
+  useEffect(() => {
+    if (!game || mode === 'online') return
+    const cp = game.currentPlayer
+    if (prevPlayerRef.current >= 0 && prevPlayerRef.current !== cp) {
+      setTurnAnim('out')
+      const t1 = setTimeout(() => setTurnAnim('in'), 300)
+      const t2 = setTimeout(() => { setTurnAnim('idle'); prevPlayerRef.current = cp }, 600)
+      return () => { clearTimeout(t1); clearTimeout(t2) }
+    }
+    prevPlayerRef.current = cp
+  }, [game?.currentPlayer, mode])
 
   // 页面卸载时清理 LCManager，防止僵尸连接
   useEffect(() => {
@@ -1041,6 +1058,17 @@ export default function MonopolyGame() {
               if (taxMatch && !msg.includes('保释金')) {
                 renderer.showFloatingText(tileIdx, `-¥${taxMatch[1]}`, '#ef4444')
               }
+
+              // NPC 入场动画
+              if (msg.includes('获得') || msg.includes('中彩票') || msg.includes('股票大涨') || msg.includes('年终奖') || msg.includes('红包雨')) {
+                renderer.spawnNPC('god_wealth', tileIdx)
+              } else if (msg.includes('缴纳个人所得税') || msg.includes('缴纳房产税')) {
+                renderer.spawnNPC('god_poverty', tileIdx)
+              } else if (msg.includes('被送进监狱')) {
+                renderer.spawnNPC('police', 7)
+              } else if (msg.includes('生病') || msg.includes('罚款') || msg.includes('手机丢了')) {
+                renderer.spawnNPC('dog', tileIdx)
+              }
             }
           }
 
@@ -1327,6 +1355,24 @@ export default function MonopolyGame() {
               if (msg.includes('购买')) playBuySound()
               else if (msg.includes('支付') || msg.includes('缴纳')) playPaySound()
               else if (msg.includes('破产')) playBankruptSound()
+            }
+
+            // AI 回合 NPC 入场动画
+            const aiRenderer = rendererRef.current
+            const aiPlayer = gsCopy.players[gsCopy.currentPlayer]
+            if (aiRenderer && aiPlayer) {
+              const aiTileIdx = aiPlayer.position
+              for (const msg of turnMessages) {
+                if (msg.includes('获得') || msg.includes('中彩票') || msg.includes('股票大涨') || msg.includes('年终奖') || msg.includes('红包雨')) {
+                  aiRenderer.spawnNPC('god_wealth', aiTileIdx)
+                } else if (msg.includes('缴纳个人所得税') || msg.includes('缴纳房产税')) {
+                  aiRenderer.spawnNPC('god_poverty', aiTileIdx)
+                } else if (msg.includes('被送进监狱')) {
+                  aiRenderer.spawnNPC('police', 7)
+                } else if (msg.includes('生病') || msg.includes('罚款') || msg.includes('手机丢了')) {
+                  aiRenderer.spawnNPC('dog', aiTileIdx)
+                }
+              }
             }
 
             const allMsgs = [...msgs, ...turnMessages]
@@ -2028,7 +2074,7 @@ export default function MonopolyGame() {
           <div className="p-4 border-b border-white/8 relative overflow-hidden">
             <div className="absolute inset-0 opacity-10" style={{ background: `linear-gradient(135deg, ${currentPlayer?.color}44, transparent)` }} />
             <div className="absolute top-0 left-0 w-full h-1" style={{ background: currentPlayer?.color }} />
-            <div className="relative flex items-center justify-between">
+            <div className={`relative flex items-center justify-between ${turnAnim === 'out' ? 'turn-slide-out' : turnAnim === 'in' ? 'turn-slide-in' : ''}`}>
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl shadow-lg"
                   style={{ background: currentPlayer?.color + '33', border: `2px solid ${currentPlayer?.color}` }}>
