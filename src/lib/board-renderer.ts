@@ -497,7 +497,7 @@ export class BoardRenderer {
 
       // --- 道具卡效果角标 ---
       if (hasRoadblock) {
-        const roadblock = useEffects?.roadblocks.find(r => r.tileId === tile.id)
+        const roadblock = effects?.roadblocks.find(r => r.tileId === tile.id)
         const badgeX = pos.x + pos.w - pad - 4
         const badgeY = pos.y + pad + 4
         ctx.font = this.font(14)
@@ -506,8 +506,8 @@ export class BoardRenderer {
         ctx.fillText('🚧', badgeX, badgeY)
 
         // 显示放置者头像（小尺寸，在路障左侧）
-        if (roadblock && usePlayers) {
-          const owner = usePlayers.find(p => p.id === roadblock.ownerPlayerId)
+        if (roadblock && players) {
+          const owner = players.find(p => p.id === roadblock.ownerPlayerId)
           if (owner) {
             ctx.font = this.font(10)
             ctx.fillText(owner.avatar, badgeX - this.px(14), badgeY)
