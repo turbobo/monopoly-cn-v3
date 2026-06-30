@@ -69,6 +69,7 @@ export class BoardRenderer {
   private tileSize: number = 0
   private cornerSize: number = 0
   private dpr: number = 1
+  private fontScale: number = 1
   private animId: number = -1
   private time: number = 0
   private dt: number = 1
@@ -108,9 +109,11 @@ export class BoardRenderer {
 
   /** 按 DPR 缩放像素值 */
   private px(n: number): number { return Math.round(n * this.dpr) }
-  /** 生成 DPR 适配的 font 字符串 */
+  /** 按 DPR + fontScale 缩放像素值（用于文字和内容定位） */
+  private sp(n: number): number { return Math.round(n * this.dpr * this.fontScale) }
+  /** 生成 DPR + fontScale 适配的 font 字符串 */
   private font(size: number, family: string = 'sans-serif', weight: string = ''): string {
-    return `${weight} ${this.px(size)}px ${family}`.trim()
+    return `${weight} ${this.sp(size)}px ${family}`.trim()
   }
 
   resize() {
@@ -130,6 +133,7 @@ export class BoardRenderer {
     this.size = w * dpr
     this.tileSize = this.size / 8.5
     this.cornerSize = this.tileSize * 1.3
+    this.fontScale = Math.min(1, (this.tileSize / dpr) / 70)
   }
 
   private _lastTimestamp = 0
@@ -473,25 +477,25 @@ export class BoardRenderer {
 
       if (pos.isCorner) {
         ctx.font = this.font(30)
-        ctx.fillText(tile.emoji, cx, cy - this.px(12))
+        ctx.fillText(tile.emoji, cx, cy - this.sp(12))
         ctx.fillStyle = '#e8e8e8'
         ctx.font = this.font(17, '"Noto Sans SC", sans-serif', 'bold')
-        ctx.fillText(tile.name, cx, cy + this.px(20))
+        ctx.fillText(tile.name, cx, cy + this.sp(20))
       } else {
         ctx.font = this.font(22)
-        ctx.fillText(tile.emoji, cx, cy - this.px(16))
+        ctx.fillText(tile.emoji, cx, cy - this.sp(16))
 
         ctx.fillStyle = '#f0f0f0'
         ctx.font = this.font(16, '"Noto Sans SC", sans-serif', 'bold')
-        ctx.fillText(tile.name, cx, cy + this.px(5))
+        ctx.fillText(tile.name, cx, cy + this.sp(5))
 
         if (owner) {
           ctx.font = this.font(15)
-          ctx.fillText(owner.avatar, cx, cy + this.px(23))
+          ctx.fillText(owner.avatar, cx, cy + this.sp(23))
         } else if (tile.price > 0) {
           ctx.fillStyle = '#8899aa'
           ctx.font = this.font(13, '"Noto Sans SC", sans-serif')
-          ctx.fillText(`¥${tile.price}`, cx, cy + this.px(23))
+          ctx.fillText(`¥${tile.price}`, cx, cy + this.sp(23))
         }
       }
 
@@ -523,97 +527,88 @@ export class BoardRenderer {
 
     ctx.fillStyle = 'rgba(139,92,246,0.15)'
     ctx.font = this.font(44, '"Noto Sans SC", sans-serif', 'bold')
-    ctx.fillText('大富翁', cx + this.px(2), cy - this.px(38))
+    ctx.fillText('大富翁', cx + this.sp(2), cy - this.sp(38))
     ctx.fillStyle = '#8b5cf6'
     ctx.font = this.font(42, '"Noto Sans SC", sans-serif', 'bold')
-    ctx.fillText('大富翁', cx, cy - this.px(40))
+    ctx.fillText('大富翁', cx, cy - this.sp(40))
     ctx.fillStyle = '#6366f1'
     ctx.font = this.font(24, '"Noto Sans SC", sans-serif')
-    ctx.fillText('中国行', cx, cy - this.px(5))
+    ctx.fillText('中国行', cx, cy - this.sp(5))
 
     if (this.diceAnim.active) {
       const p = this.diceAnim.progress
-      // 动画分阶段：0-0.6 翻滚上升，0.6-0.85 悬停翻滚，0.85-1.0 下落落地
+      const s = this.fontScale
 
       let spread, flyUp, shake, scale, rot1, rot2
 
       if (p < 0.6) {
-        // 阶段1：上升 + 分开
         const t = p / 0.6
-        spread = 20 + t * 35
-        flyUp = Math.sin(t * Math.PI * 0.5) * 50
-        shake = Math.sin(t * 80) * 4
+        spread = (20 + t * 35) * s
+        flyUp = Math.sin(t * Math.PI * 0.5) * 50 * s
+        shake = Math.sin(t * 80) * 4 * s
         scale = 0.8 + t * 0.4
         rot1 = t * Math.PI * 12
         rot2 = -t * Math.PI * 10
       } else if (p < 0.85) {
-        // 阶段2：悬停 + 快速切换面值
         const t = (p - 0.6) / 0.25
-        spread = 55 + Math.sin(t * Math.PI * 4) * 5
-        flyUp = 50 - t * 10
-        shake = Math.sin(t * 100) * 6 * (1 - t)
+        spread = (55 + Math.sin(t * Math.PI * 4) * 5) * s
+        flyUp = (50 - t * 10) * s
+        shake = Math.sin(t * 100) * 6 * (1 - t) * s
         scale = 1.2 - t * 0.1
         rot1 = Math.PI * 7.2 + t * Math.PI * 6
         rot2 = -Math.PI * 6 + t * Math.PI * 5
       } else {
-        // 阶段3：下落 + 落地
         const t = (p - 0.85) / 0.15
-        spread = 55 - t * 13
-        flyUp = 40 * (1 - t * t) // 加速下落
-        shake = (1 - t) * Math.sin(t * 30) * 3
+        spread = (55 - t * 13) * s
+        flyUp = 40 * (1 - t * t) * s
+        shake = (1 - t) * Math.sin(t * 30) * 3 * s
         scale = 1.1 - t * 0.1
         rot1 = Math.PI * 13.2 * (1 - t * 0.3)
         rot2 = -Math.PI * 11 * (1 - t * 0.3)
 
-        // 下落时拖尾粒子
         if (Math.random() < 0.3) {
           const diceX1 = cx - spread
           const diceX2 = cx + spread
-          const diceY = cy + 55 - flyUp
+          const diceY = cy + 55 * s - flyUp
           this.particles.push({ x: diceX1, y: diceY, vx: (Math.random() - 0.5) * 2, vy: Math.random() * 2, size: 2 + Math.random() * 2, alpha: 0.6, color: '#f59e0b', life: 0, maxLife: 15 })
           this.particles.push({ x: diceX2, y: diceY, vx: (Math.random() - 0.5) * 2, vy: Math.random() * 2, size: 2 + Math.random() * 2, alpha: 0.6, color: '#f59e0b', life: 0, maxLife: 15 })
         }
       }
 
-      // 快速切换面值时加模糊效果（缩小点的大小）
       const blurFactor = (p > 0.6 && p < 0.85) ? 0.7 : 1
 
-      this.drawDice(cx - spread + shake, cy + 55 - flyUp, this.diceAnim.shuffleValues[0], p, scale, rot1, blurFactor)
-      this.drawDice(cx + spread - shake, cy + 55 - flyUp, this.diceAnim.shuffleValues[1], p, scale, rot2, blurFactor)
+      this.drawDice(cx - spread + shake, cy + 55 * s - flyUp, this.diceAnim.shuffleValues[0], p, scale, rot1, blurFactor)
+      this.drawDice(cx + spread - shake, cy + 55 * s - flyUp, this.diceAnim.shuffleValues[1], p, scale, rot2, blurFactor)
     } else if (this.diceVisible) {
-      // 落地弹跳（多段弹跳）
+      const s = this.fontScale
       const bouncePhase = this.diceAnim.landBounce
       let bounceY = 0, bounceScale = 1
 
       if (bouncePhase > 0.5) {
-        // 第一段弹跳：向上
         const t = (bouncePhase - 0.5) * 2
-        bounceY = Math.sin(t * Math.PI) * 15
+        bounceY = Math.sin(t * Math.PI) * 15 * s
         bounceScale = 1 + Math.sin(t * Math.PI) * 0.15
       } else if (bouncePhase > 0.2) {
-        // 第二段弹跳：压扁
         const t = (bouncePhase - 0.2) / 0.3
-        bounceY = -Math.sin(t * Math.PI) * 5
+        bounceY = -Math.sin(t * Math.PI) * 5 * s
         bounceScale = 1 - Math.sin(t * Math.PI) * 0.1
       } else if (bouncePhase > 0) {
-        // 第三段：轻微抖动
         const t = bouncePhase / 0.2
-        bounceY = Math.sin(t * Math.PI * 2) * 2
+        bounceY = Math.sin(t * Math.PI * 2) * 2 * s
         bounceScale = 1 + Math.sin(t * Math.PI * 2) * 0.03
       }
 
-      this.drawDice(cx - 42, cy + 55 - bounceY, this.lastDice[0], 1, bounceScale, 0, 1)
-      this.drawDice(cx + 42, cy + 55 - bounceY, this.lastDice[1], 1, bounceScale, 0, 1)
+      this.drawDice(cx - 42 * s, cy + 55 * s - bounceY, this.lastDice[0], 1, bounceScale, 0, 1)
+      this.drawDice(cx + 42 * s, cy + 55 * s - bounceY, this.lastDice[1], 1, bounceScale, 0, 1)
 
-      // 落地光环
       if (bouncePhase > 0.3) {
         ctx.save()
         ctx.globalAlpha = (bouncePhase - 0.3) * 0.4
         ctx.strokeStyle = '#f59e0b'
         ctx.lineWidth = 2
-        const ringRadius = 55 + (1 - bouncePhase) * 20
+        const ringRadius = (55 + (1 - bouncePhase) * 20) * s
         ctx.beginPath()
-        ctx.ellipse(cx, cy + 58, ringRadius, ringRadius * 0.3, 0, 0, Math.PI * 2)
+        ctx.ellipse(cx, cy + 58 * s, ringRadius, ringRadius * 0.3, 0, 0, Math.PI * 2)
         ctx.stroke()
         ctx.restore()
       }
@@ -624,20 +619,20 @@ export class BoardRenderer {
         const resultScale = sr < 0.5 ? 1 + (1 - sr * 2) * 0.5 : 1
         ctx.save()
         ctx.globalAlpha = Math.min(1, sr * 2)
-        ctx.translate(cx, cy + 115)
+        ctx.translate(cx, cy + this.sp(58))
         ctx.scale(resultScale, resultScale)
 
         // 背景胶囊
         const total = this.lastDice[0] + this.lastDice[1]
         const text = `${total}`
         ctx.font = this.font(28, '"Noto Sans SC", sans-serif', 'bold')
-        const textW = ctx.measureText(text).width + this.px(30)
+        const textW = ctx.measureText(text).width + this.sp(30)
         ctx.fillStyle = 'rgba(245,158,11,0.15)'
-        this.roundedRect(-textW / 2, -this.px(18), textW, this.px(36), this.px(18))
+        this.roundedRect(-textW / 2, -this.sp(18), textW, this.sp(36), this.sp(18))
         ctx.fill()
         ctx.strokeStyle = 'rgba(245,158,11,0.4)'
         ctx.lineWidth = 1.5
-        this.roundedRect(-textW / 2, -this.px(18), textW, this.px(36), this.px(18))
+        this.roundedRect(-textW / 2, -this.sp(18), textW, this.sp(36), this.sp(18))
         ctx.stroke()
 
         // 数字
@@ -655,30 +650,28 @@ export class BoardRenderer {
 
   private drawDice(x: number, y: number, value: number, progress: number, scale = 1, rotation = 0, blurFactor = 1) {
     const { ctx } = this
-    const s = 52 * scale
+    const f = this.fontScale
+    const s = 52 * scale * f
+    const cr = 10 * f
 
     ctx.save()
     ctx.translate(x, y)
     ctx.rotate(rotation)
 
-    // 3D 透视变形（根据旋转角模拟倾斜）
     const tilt = Math.sin(rotation) * 0.15
     ctx.transform(1, tilt, -tilt, 1, 0, 0)
 
-    // 翻滚中的金色光晕
     if (blurFactor < 1) {
       ctx.shadowColor = 'rgba(245,158,11,0.4)'
       ctx.shadowBlur = 20 * (1 - blurFactor)
     }
 
-    // 阴影（动态偏移，翻滚时更大）
-    const shadowOff = 3 + Math.abs(Math.sin(rotation)) * 4 + (1 - blurFactor) * 5
+    const shadowOff = (3 + Math.abs(Math.sin(rotation)) * 4 + (1 - blurFactor) * 5) * f
     ctx.fillStyle = `rgba(0,0,0,${0.2 + (1 - blurFactor) * 0.1})`
-    this.roundedRect(shadowOff, shadowOff, s, s, 10)
+    this.roundedRect(shadowOff, shadowOff, s, s, cr)
     ctx.fill()
     ctx.shadowBlur = 0
 
-    // 骰子本体（渐变模拟光照）
     const lightAngle = rotation + Math.PI / 4
     const grad = ctx.createLinearGradient(
       Math.cos(lightAngle) * s / 2, Math.sin(lightAngle) * s / 2,
@@ -688,26 +681,24 @@ export class BoardRenderer {
     grad.addColorStop(0.5, '#f8f8fc')
     grad.addColorStop(1, '#e0e0e8')
     ctx.fillStyle = grad
-    this.roundedRect(-s / 2, -s / 2, s, s, 10)
+    this.roundedRect(-s / 2, -s / 2, s, s, cr)
     ctx.fill()
 
-    // 边框
     ctx.strokeStyle = 'rgba(0,0,0,0.12)'
     ctx.lineWidth = 1.5
-    this.roundedRect(-s / 2, -s / 2, s, s, 10)
+    this.roundedRect(-s / 2, -s / 2, s, s, cr)
     ctx.stroke()
 
-    // 内阴影效果
     ctx.save()
     ctx.globalAlpha = 0.05
     ctx.fillStyle = '#000'
-    this.roundedRect(-s / 2 + 3, -s / 2 + 3, s - 6, s - 6, 8)
+    const inset = 3 * f
+    this.roundedRect(-s / 2 + inset, -s / 2 + inset, s - inset * 2, s - inset * 2, cr * 0.8)
     ctx.fill()
     ctx.restore()
 
-    // 点数（带模糊效果：翻滚时点变小变淡，模拟运动模糊）
     ctx.fillStyle = value === 1 || value === 4 ? '#dc2626' : '#1a1a2e'
-    const dotR = 5 * scale * blurFactor, offset = 13 * scale
+    const dotR = 5 * scale * f * blurFactor, offset = 13 * scale * f
     ctx.globalAlpha = 0.5 + blurFactor * 0.5
     const positions: Record<number, [number, number][]> = {
       1: [[0, 0]], 2: [[-offset, -offset], [offset, offset]],
@@ -810,7 +801,7 @@ export class BoardRenderer {
   // 绘制移动中的棋子（♟️标记 + 旋转和形变）
   private drawTokenAnimated(x: number, y: number, p: Player, rotation: number, scaleX: number, scaleY: number) {
     const { ctx } = this
-    const r = this.px(18)
+    const r = this.sp(18)
 
     ctx.save()
     ctx.translate(x, y)
@@ -851,12 +842,12 @@ export class BoardRenderer {
 
   private drawToken(tokenX: number, tokenY: number, p: Player, isCurrent: boolean) {
     const { ctx } = this
-    const r = isCurrent ? this.px(18) : this.px(12)
+    const r = isCurrent ? this.sp(18) : this.sp(12)
 
     // ===== 当前玩家：高亮光标 =====
     if (isCurrent) {
       // 底部发光光圈
-      const glowR = r + this.px(10)
+      const glowR = r + this.sp(10)
       const glowGrad = ctx.createRadialGradient(tokenX, tokenY, r * 0.8, tokenX, tokenY, glowR)
       glowGrad.addColorStop(0, p.color + '55')
       glowGrad.addColorStop(1, p.color + '00')
@@ -864,17 +855,17 @@ export class BoardRenderer {
       ctx.fillStyle = glowGrad; ctx.fill()
 
       // 脉冲外圈
-      const pulseR = r + this.px(4) + Math.sin(this.time * 5) * this.px(2)
+      const pulseR = r + this.sp(4) + Math.sin(this.time * 5) * this.sp(2)
       ctx.beginPath(); ctx.arc(tokenX, tokenY, pulseR, 0, Math.PI * 2)
       ctx.strokeStyle = p.color
       ctx.lineWidth = 2.5
       ctx.stroke()
 
       // 顶部指示箭头（向下指）
-      const arrowY = tokenY - r - this.px(6)
+      const arrowY = tokenY - r - this.sp(6)
       ctx.beginPath()
-      ctx.moveTo(tokenX - this.px(7), arrowY - this.px(12))
-      ctx.lineTo(tokenX + this.px(7), arrowY - this.px(12))
+      ctx.moveTo(tokenX - this.sp(7), arrowY - this.sp(12))
+      ctx.lineTo(tokenX + this.sp(7), arrowY - this.sp(12))
       ctx.lineTo(tokenX, arrowY)
       ctx.closePath()
       ctx.fillStyle = p.color
@@ -905,14 +896,14 @@ export class BoardRenderer {
     ctx.fillText(p.avatar, tokenX, tokenY + 1)
 
     // ===== 标签 =====
-    const labelStartY = tokenY + r + (isCurrent ? this.px(14) : this.px(10))
+    const labelStartY = tokenY + r + (isCurrent ? this.sp(14) : this.sp(10))
 
     // 玩家名（当前玩家显示）
     if (isCurrent) {
       ctx.font = this.font(11, '"Noto Sans SC", sans-serif', 'bold')
-      const nameW = ctx.measureText(p.name).width + this.px(12)
+      const nameW = ctx.measureText(p.name).width + this.sp(12)
       ctx.fillStyle = p.color
-      this.roundedRect(tokenX - nameW / 2, labelStartY - this.px(7), nameW, this.px(14), this.px(7))
+      this.roundedRect(tokenX - nameW / 2, labelStartY - this.sp(7), nameW, this.sp(14), this.sp(7))
       ctx.fill()
       ctx.fillStyle = '#ffffff'
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
@@ -920,12 +911,12 @@ export class BoardRenderer {
     }
 
     // 现金（紧凑显示）
-    const cashY = labelStartY + (isCurrent ? this.px(15) : 0)
+    const cashY = labelStartY + (isCurrent ? this.sp(15) : 0)
     const cashText = `¥${p.money}`
     ctx.font = this.font(isCurrent ? 11 : 10, '"Noto Sans SC", sans-serif', 'bold')
-    const cashW = ctx.measureText(cashText).width + this.px(8)
+    const cashW = ctx.measureText(cashText).width + this.sp(8)
     ctx.fillStyle = 'rgba(0,0,0,0.7)'
-    this.roundedRect(tokenX - cashW / 2, cashY - this.px(6), cashW, this.px(12), this.px(6))
+    this.roundedRect(tokenX - cashW / 2, cashY - this.sp(6), cashW, this.sp(12), this.sp(6))
     ctx.fill()
     ctx.fillStyle = p.money > 500 ? '#4ade80' : p.money > 200 ? '#fbbf24' : '#ef4444'
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
@@ -945,7 +936,7 @@ export class BoardRenderer {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.font = this.font(ft.fontSize, '"Noto Sans SC", sans-serif', 'bold')
       const textW = ctx.measureText(ft.text).width
-      const pillW = textW + this.px(20), pillH = ft.fontSize * this.dpr + this.px(10)
+      const pillW = textW + this.sp(20), pillH = ft.fontSize * this.dpr * this.fontScale + this.sp(10)
       ctx.fillStyle = 'rgba(0,0,0,0.7)'
       this.roundedRect(ft.x - pillW / 2, floatY - pillH / 2, pillW, pillH, pillH / 2); ctx.fill()
       ctx.fillStyle = ft.color
