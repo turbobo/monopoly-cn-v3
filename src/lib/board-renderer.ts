@@ -118,7 +118,7 @@ export class BoardRenderer {
     if (!container) return
     const isMobile = window.innerWidth < 768
     const maxW = isMobile
-      ? Math.min(window.innerWidth - 16, window.innerHeight * 0.55)
+      ? Math.min(window.innerWidth - 16, window.innerHeight * 0.45)
       : Math.min(window.innerWidth * 0.6, window.innerHeight * 0.9)
     const w = Math.min(container.clientWidth - 8, container.clientHeight - 8, maxW)
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
