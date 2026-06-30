@@ -1514,7 +1514,8 @@ export default function MonopolyGame() {
           const relY = tileInfo.y - rect.top
           // 弹窗偏移，避免遮挡格子
           const popX = relX > rect.width / 2 ? relX - 220 : relX + 20
-          const popY = Math.max(8, Math.min(relY - 60, rect.height - 240))
+          const popY = Math.max(8, Math.min(relY - 60, rect.height - 100))
+          const maxPopH = rect.height - popY - 8
 
           // 类型描述
           const typeDesc: Record<string, string> = {
@@ -1534,8 +1535,10 @@ export default function MonopolyGame() {
               className="absolute z-30 pointer-events-auto bounce-in"
               style={{ left: popX, top: popY, width: 200 }}
               onClick={(e) => e.stopPropagation()}
+              onTouchMove={(e) => e.stopPropagation()}
             >
-              <div className="bg-[#1a1f2e]/95 backdrop-blur-md border border-white/15 rounded-xl p-3 shadow-2xl shadow-black/50">
+              <div className="bg-[#1a1f2e]/95 backdrop-blur-md border border-white/15 rounded-xl p-3 shadow-2xl shadow-black/50 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
+                style={{ maxHeight: maxPopH }}>
                 {/* 头部 */}
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-1.5">
