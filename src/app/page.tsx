@@ -1501,8 +1501,9 @@ export default function MonopolyGame() {
           // 查找涨价状态
           const hike = game.priceHikes?.find(h => h.tileId === tile.id)
 
-          // 查找路障
-          const hasRoadblock = game.roadblocks?.some(r => r.tileId === tile.id)
+          // 查找路障及放置者
+          const roadblock = game.roadblocks?.find(r => r.tileId === tile.id)
+          const roadblockOwner = roadblock ? game.players.find(p => p.id === roadblock.ownerPlayerId) : null
 
           // 计算弹窗位置：基于canvas容器
           const boardArea = document.querySelector('.flex-1.relative.flex') as HTMLElement
@@ -1561,7 +1562,7 @@ export default function MonopolyGame() {
                       📈 涨价中({hike.roundsLeft}回合)
                     </span>
                   )}
-                  {hasRoadblock && (
+                  {roadblock && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-medium">
                       🚧 路障
                     </span>
@@ -1581,6 +1582,17 @@ export default function MonopolyGame() {
                 {!owner && tile.price > 0 && (
                   <div className="py-1.5 px-2 mb-2 rounded-lg bg-white/5">
                     <span className="text-[10px] text-gray-500">暂无拥有者</span>
+                  </div>
+                )}
+
+                {/* 路障放置者 */}
+                {roadblockOwner && (
+                  <div className="flex items-center gap-1.5 mb-2 py-1.5 px-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                    <span className="text-xs">{roadblockOwner.avatar}</span>
+                    <span className="text-xs text-orange-300">{roadblockOwner.name}</span>
+                    <span className="text-[10px] ml-auto px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">
+                      放置路障
+                    </span>
                   </div>
                 )}
 
