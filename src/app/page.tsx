@@ -734,7 +734,7 @@ export default function MonopolyGame() {
       if (player.bankrupt) return // 已破产，无需处理
       if (player.disconnected) return // 已处于宽限期，避免重复触发
 
-      // 如果断线玩家正在购买决策中，清除购买超时
+      // 如果断线玩家正在购买决策中，清除购买超时（避免 20s 后自动跳过）
       if (buyTimeoutRef.current && gs.currentPlayer === playerIdx) {
         clearTimeout(buyTimeoutRef.current)
         buyTimeoutRef.current = null
@@ -744,15 +744,18 @@ export default function MonopolyGame() {
       newState.players[playerIdx].disconnected = true
 
       const newMsgs = [...messagesRef.current]
-      newMsgs.push(`⚠️ ${disconnectedName} 断开连接，进入 60 秒宽限期...`)
+      // 区分当前玩家 vs 非当前玩家：当前玩家的回合会被保留，等其重连后继续
+      const isCurrentPlayerDisconnecting = newState.currentPlayer === playerIdx
+      newMsgs.push(
+        isCurrentPlayerDisconnecting
+          ? `⚠️ ${disconnectedName} 断开连接（当前回合），进入 60 秒宽限期，等待重连继续...`
+          : `⚠️ ${disconnectedName} 断开连接，进入 60 秒宽限期...`
+      )
 
-      // 如果断线的是当前玩家，跳过其回合（掉线状态也会被 nextPlayer 跳过）
-      if (newState.currentPlayer === playerIdx) {
-        const logBefore = newState.log.length
-        nextPlayer(newState)
-        const newLogMsgs = newState.log.slice(logBefore)
-        newMsgs.push(...newLogMsgs)
-      }
+      // 关键改动：不跳过当前玩家的回合！
+      // 保留 currentPlayer == playerIdx，等玩家重连后自动恢复操作
+      // 如果 60s 内未重连，finalizeDisconnect 才会推进回合
+      // 非当前玩家断线：无需处理回合推进
 
       setMessages(newMsgs)
       setGame(newState)
@@ -769,7 +772,7 @@ export default function MonopolyGame() {
       graceTimersRef.current.set(disconnectedName, timer)
     }
 
-    // 处理掉线玩家重连：清除 disconnected 标记 + 取消定时器
+    // 处理掉线玩家重连：清除 disconnected 标记 + 取消定时器 + 恢复回合
     const handlePlayerReconnect = (reconnectedName: string, peer: GoEasyManager) => {
       const gs = gameRef.current
       if (!gs || gs.gameOver) return
@@ -789,7 +792,13 @@ export default function MonopolyGame() {
       newState.players[playerIdx].disconnected = false
 
       const newMsgs = [...messagesRef.current]
-      newMsgs.push(`✅ ${reconnectedName} 已重新连接`)
+      // 根据是否是当前回合玩家，给出不同的重连提示
+      const isTheirTurn = newState.currentPlayer === playerIdx
+      newMsgs.push(
+        isTheirTurn
+          ? `✅ ${reconnectedName} 已重新连接，回合已恢复，请继续操作`
+          : `✅ ${reconnectedName} 已重新连接`
+      )
 
       setMessages(newMsgs)
       setGame(newState)
@@ -1187,7 +1196,10 @@ export default function MonopolyGame() {
 
   // ===== 掷骰子（UI 入口） =====
   const handleRoll = useCallback(() => {
-    if (!game || rolling || paused || !currentPlayer || currentPlayer.bankrupt || currentPlayer.disconnected) return
+    // 允许本地玩家重连后继续操作（disconnected 标记会在重连时被 Host 清除，但以防万一这里也放过本地）
+    const isLocalPlayer = currentPlayer?.name === playerName
+    if (!game || rolling || paused || !currentPlayer || currentPlayer.bankrupt) return
+    if (currentPlayer.disconnected && !isLocalPlayer) return // 仅阻止远端掉线玩家，不阻止本地重连玩家
     if (game.phase !== 'roll') return
     if (mode !== 'online' && currentPlayer.isAI) return
 
@@ -1413,7 +1425,9 @@ export default function MonopolyGame() {
       if (myIdx < 0 || myIdx !== latestGame.currentPlayer) return
     }
     const currentPlayerObj = latestGame.players[latestGame.currentPlayer]
-    if (!currentPlayerObj || currentPlayerObj.bankrupt || currentPlayerObj.disconnected) return
+    const isLocalPlayer = currentPlayerObj?.name === playerName
+    if (!currentPlayerObj || currentPlayerObj.bankrupt) return
+    if (currentPlayerObj.disconnected && !isLocalPlayer) return // 仅阻止远端掉线玩家
 
     // Online guest: send card action to host
     if (mode === 'online' && onlineRole === 'guest') {
@@ -2574,10 +2588,12 @@ export default function MonopolyGame() {
             ) : isCurrentPlayerHuman && !rolling ? (
               <div className="space-y-2">
                 <button onClick={handleRoll}
-                  disabled={paused || rolling || currentPlayer?.bankrupt || currentPlayer?.disconnected || (mode === 'online' && !isMyTurn)}
+                  disabled={paused || rolling || currentPlayer?.bankrupt || (currentPlayer?.disconnected && currentPlayer?.name !== playerName) || (mode === 'online' && !isMyTurn)}
                   className="w-full py-2.5 md:py-3.5 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 active:scale-95 text-base md:text-lg disabled:opacity-50 disabled:cursor-not-allowed">
                   {mode === 'online' && !isMyTurn
                     ? `⏳ 等待 ${currentPlayer?.name} 操作...`
+                    : currentPlayer?.disconnected && currentPlayer?.name === playerName
+                    ? '🎲 重连成功，继续掷骰子'
                     : '🎲 掷骰子'}
                 </button>
                 {/* 道具卡按钮 */}
