@@ -640,6 +640,31 @@ export default function MonopolyGame() {
           }
           break
         }
+
+        case 'host-migrated': {
+          // Guest 收到新房主的迁移通知：更新玩家列表 + 标记新房主
+          if (!peer.getIsHost()) {
+            const { newHostId, newHostName, oldHostName, players } = message.payload
+            const migrated: OnlinePlayer[] = players.map((p: { id: string; name: string; isHost: boolean }) => ({
+              id: p.id,
+              name: p.name,
+              isHost: p.isHost,
+            }))
+            playersRef.current = migrated
+            setOnlinePlayers(migrated)
+
+            // 清除错误提示（可能之前显示过"等待新房主晋升..."）
+            setConnectionError('')
+
+            const newMsgs = [...messagesRef.current]
+            newMsgs.push(`👑 ${oldHostName} 已断线，${newHostName} 晋升为新房主`)
+            setMessages(newMsgs)
+
+            // 如果当前是 lobby 阶段，保持状态；如果是 game 阶段，等新房主广播 game-state
+            // 新房主会在迁移后立即广播 game-state，这里无需主动请求
+          }
+          break
+        }
       }
     }
 
@@ -802,15 +827,54 @@ export default function MonopolyGame() {
         // Guest 端：检查断开的是否为房主
         const disconnectedPeer = playersRef.current.find(p => p.id === peerId)
         if (disconnectedPeer?.isHost) {
-          setConnectionError('房主已断开连接')
-          // Guest 清理并返回大厅
-          peerRef.current?.destroy()
-          peerRef.current = null
-          setScreen('setup')
-          setGame(null)
-          setOnlinePlayers([])
-          setOnlineRole(null)
-          setRoomId('')
+          // ===== Host Migration：按 ID 字典序最小的 Guest 自动晋升为新房主 =====
+          const myId = peer.getClientId()
+          const remaining = playersRef.current.filter(p => p.id !== peerId)
+          // 找到除自己外字典序最小的 Guest ID
+          const otherIds = remaining.filter(p => !p.isHost).map(p => p.id)
+          const iAmFirstGuest = otherIds.every(id => id.localeCompare(myId) >= 0)
+
+          if (iAmFirstGuest && remaining.length > 0) {
+            // 我晋升为新房主
+            peer.setIsHost(true)
+            setOnlineRole('host')
+            // 更新 playersRef 中的 isHost 标记
+            const migrated = remaining.map(p =>
+              p.id === myId ? { ...p, isHost: true } : { ...p, isHost: false }
+            )
+            playersRef.current = migrated
+            setOnlinePlayers(migrated)
+
+            const newMsgs = [...messagesRef.current]
+            newMsgs.push(`👑 房主已断线，你已自动晋升为新房主`)
+            setMessages(newMsgs)
+
+            // 广播 host-migrated 通知其他 Guest
+            peer.broadcast({
+              type: 'host-migrated',
+              payload: {
+                newHostId: myId,
+                newHostName: playerName,
+                oldHostName: disconnectedPeer.name,
+                players: migrated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
+              }
+            })
+
+            // 同步当前游戏状态（作为新房主权威）
+            if (gameRef.current && !gameRef.current.gameOver) {
+              broadcastState(gameRef.current, newMsgs)
+            }
+          } else {
+            // 等其他 Guest 的 host-migrated 消息；先显示临时提示
+            setConnectionError('房主已断线，等待新房主晋升...')
+            // 暂时保留当前状态，10s 内没收到 host-migrated 则回大厅
+            setTimeout(() => {
+              // 如果仍显示该错误说明没收到迁移消息
+              if (screenRef.current === 'lobby' || screenRef.current === 'game') {
+                setConnectionError('')
+              }
+            }, 10000)
+          }
         }
       }
     }
