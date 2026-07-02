@@ -27,6 +27,7 @@ export interface Player {
   inJail: boolean
   jailTurns: number
   bankrupt: boolean
+  disconnected?: boolean // 掉线中（宽限期内可重连恢复）
   isAI: boolean
   aiPersonality?: 'aggressive' | 'balanced' | 'conservative'
   color: string
@@ -910,14 +911,14 @@ export function finalizeTurn(gs: GameState): string[] {
 export function nextPlayer(gs: GameState) {
   const len = gs.players.length
   let next = (gs.currentPlayer + 1) % len
-  // 只在初始步骤（非跳过破产玩家的循环）跨越末尾→开头边界时，才算作回合回绕
+  // 只在初始步骤（非跳过破产/掉线玩家的循环）跨越末尾→开头边界时，才算作回合回绕
   const initialWrapped = next <= gs.currentPlayer
   let safety = 0
-  while (gs.players[next].bankrupt && safety < len) {
+  while ((gs.players[next].bankrupt || gs.players[next].disconnected) && safety < len) {
     next = (next + 1) % len
     safety++
   }
-  // 全员破产防御
+  // 全员破产/掉线防御
   if (safety >= len) {
     gs.gameOver = true
     return

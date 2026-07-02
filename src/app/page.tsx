@@ -36,6 +36,9 @@ export default function MonopolyGame() {
   const buyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const aiTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)   // AI 回合延迟
   const guestRollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // Guest 掷骰超时
+  // 掉线宽限期定时器：key = playerName，value = setTimeout id
+  // 玩家断线 → 标记 disconnected → 启动 60s 定时器；重连 → 清除
+  const graceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const playersRef = useRef<OnlinePlayer[]>([])
   const screenRef = useRef<Screen>('menu')
   const animatingRef = useRef(false)
@@ -79,6 +82,7 @@ export default function MonopolyGame() {
   const [onlinePlayers, setOnlinePlayers] = useState<OnlinePlayer[]>([])
   const [connecting, setConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState('')
+  const [connectionStatus, setConnectionStatus] = useState<{ status: 'reconnecting' | 'connected' | 'failed' | null; message: string }>({ status: null, message: '' })
   const [isMyTurn, setIsMyTurn] = useState(false)
   const [gameStarting, setGameStarting] = useState(false)
 
@@ -114,6 +118,9 @@ export default function MonopolyGame() {
         peerRef.current.destroy()
         peerRef.current = null
       }
+      // 清理宽限期定时器，避免内存泄漏
+      graceTimersRef.current.forEach(t => clearTimeout(t))
+      graceTimersRef.current.clear()
     }
     window.addEventListener('beforeunload', cleanup)
     return () => {
@@ -290,6 +297,44 @@ export default function MonopolyGame() {
       switch (message.type) {
         case 'player-join': {
           if (peer.getIsHost()) {
+            // 宽限期重连检测：如果加入的名字匹配某个掉线中的玩家 → 当作重连处理
+            const gs = gameRef.current
+            if (gs && !gs.gameOver) {
+              const disconnectedPlayer = gs.players.find(
+                p => p.name === message.payload.name && p.disconnected
+              )
+              if (disconnectedPlayer) {
+                // 更新 playersRef 中的 peerId 映射
+                const updatedPlayers = playersRef.current.map(p =>
+                  p.name === disconnectedPlayer.name
+                    ? { ...p, id: message.from }
+                    : p
+                )
+                // 如果不在列表中（被过滤），重新加入
+                if (!updatedPlayers.some(p => p.name === disconnectedPlayer.name)) {
+                  updatedPlayers.push({
+                    id: message.from,
+                    name: disconnectedPlayer.name,
+                    isHost: false,
+                  })
+                }
+                playersRef.current = updatedPlayers
+                setOnlinePlayers(updatedPlayers)
+                peer.trackPeer(message.from)
+                playPlayerJoinSound()
+                // 通知掉线玩家已重连
+                handlePlayerReconnect(disconnectedPlayer.name, peer)
+                // 广播最新的 room-info（含重连玩家）
+                peer.broadcast({
+                  type: 'room-info',
+                  payload: {
+                    players: updatedPlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
+                  }
+                })
+                break
+              }
+            }
+
             if (playersRef.current.length >= 4) {
               peer.broadcast({
                 type: 'error',
@@ -484,7 +529,7 @@ export default function MonopolyGame() {
             const actorIdx = gs.players.findIndex(p => p.name === actorName)
             if (actorIdx !== gs.currentPlayer) break // 必须是当前回合的玩家才能用卡
             const actor = gs.players[actorIdx]
-            if (!actor || actor.bankrupt) break
+            if (!actor || actor.bankrupt || actor.disconnected) break
             // 验证卡片确实属于该玩家
             if (!actor.cards.some((c: GameCard) => c.id === cardId)) break
 
@@ -598,14 +643,21 @@ export default function MonopolyGame() {
       }
     }
 
-    // 处理玩家断线：标记破产 + 跳过回合 + 广播状态
-    const handlePlayerDisconnect = (disconnectedName: string, peer: GoEasyManager) => {
+    // 最终破产处理（宽限期到期或主动放弃时调用）：标记破产 + 跳过回合 + 广播状态
+    const finalizeDisconnect = (disconnectedName: string, peer: GoEasyManager) => {
       const gs = gameRef.current
       if (!gs || gs.gameOver) return
 
       const playerIdx = gs.players.findIndex(p => p.name === disconnectedName)
       if (playerIdx === -1) return
       if (gs.players[playerIdx].bankrupt) return // 已破产，无需处理
+
+      // 清理宽限期定时器（防止重复触发）
+      const existingTimer = graceTimersRef.current.get(disconnectedName)
+      if (existingTimer) {
+        clearTimeout(existingTimer)
+        graceTimersRef.current.delete(disconnectedName)
+      }
 
       // 如果断线玩家正在购买决策中，清除购买超时
       if (buyTimeoutRef.current && gs.currentPlayer === playerIdx) {
@@ -616,6 +668,7 @@ export default function MonopolyGame() {
       const newState: GameState = JSON.parse(JSON.stringify(gs))
       const player = newState.players[playerIdx]
       player.bankrupt = true
+      player.disconnected = false // 清理掉线标记
       // 金钱可能已为负，先归零再变卖
       player.money = Math.max(0, player.money)
       // 变卖所有地皮
@@ -625,7 +678,7 @@ export default function MonopolyGame() {
       player.properties = []
 
       const newMsgs = [...messagesRef.current]
-      newMsgs.push(`💀 ${disconnectedName} 断开连接，自动破产退出`)
+      newMsgs.push(`💀 ${disconnectedName} 宽限期到期，自动破产退出`)
 
       // 如果断线的是当前玩家，跳过其回合
       if (newState.currentPlayer === playerIdx) {
@@ -645,22 +698,104 @@ export default function MonopolyGame() {
       if (newState.gameOver) setScreen('end')
     }
 
+    // 处理玩家断线：进入 60s 宽限期（标记 disconnected + 启动定时器），到期才破产
+    const handlePlayerDisconnect = (disconnectedName: string, peer: GoEasyManager) => {
+      const gs = gameRef.current
+      if (!gs || gs.gameOver) return
+
+      const playerIdx = gs.players.findIndex(p => p.name === disconnectedName)
+      if (playerIdx === -1) return
+      const player = gs.players[playerIdx]
+      if (player.bankrupt) return // 已破产，无需处理
+      if (player.disconnected) return // 已处于宽限期，避免重复触发
+
+      // 如果断线玩家正在购买决策中，清除购买超时
+      if (buyTimeoutRef.current && gs.currentPlayer === playerIdx) {
+        clearTimeout(buyTimeoutRef.current)
+        buyTimeoutRef.current = null
+      }
+
+      const newState: GameState = JSON.parse(JSON.stringify(gs))
+      newState.players[playerIdx].disconnected = true
+
+      const newMsgs = [...messagesRef.current]
+      newMsgs.push(`⚠️ ${disconnectedName} 断开连接，进入 60 秒宽限期...`)
+
+      // 如果断线的是当前玩家，跳过其回合（掉线状态也会被 nextPlayer 跳过）
+      if (newState.currentPlayer === playerIdx) {
+        const logBefore = newState.log.length
+        nextPlayer(newState)
+        const newLogMsgs = newState.log.slice(logBefore)
+        newMsgs.push(...newLogMsgs)
+      }
+
+      setMessages(newMsgs)
+      setGame(newState)
+      gameRef.current = newState
+      broadcastState(newState, newMsgs)
+
+      // 启动 60s 宽限期定时器
+      const GRACE_PERIOD_MS = 60_000
+      const timer = setTimeout(() => {
+        graceTimersRef.current.delete(disconnectedName)
+        // 定时器到期时再检查游戏状态（可能已经结束）
+        finalizeDisconnect(disconnectedName, peer)
+      }, GRACE_PERIOD_MS)
+      graceTimersRef.current.set(disconnectedName, timer)
+    }
+
+    // 处理掉线玩家重连：清除 disconnected 标记 + 取消定时器
+    const handlePlayerReconnect = (reconnectedName: string, peer: GoEasyManager) => {
+      const gs = gameRef.current
+      if (!gs || gs.gameOver) return
+
+      const playerIdx = gs.players.findIndex(p => p.name === reconnectedName)
+      if (playerIdx === -1) return
+      if (!gs.players[playerIdx].disconnected) return // 不在宽限期
+
+      // 清除定时器
+      const timer = graceTimersRef.current.get(reconnectedName)
+      if (timer) {
+        clearTimeout(timer)
+        graceTimersRef.current.delete(reconnectedName)
+      }
+
+      const newState: GameState = JSON.parse(JSON.stringify(gs))
+      newState.players[playerIdx].disconnected = false
+
+      const newMsgs = [...messagesRef.current]
+      newMsgs.push(`✅ ${reconnectedName} 已重新连接`)
+
+      setMessages(newMsgs)
+      setGame(newState)
+      gameRef.current = newState
+      broadcastState(newState, newMsgs)
+    }
+
     const disconnectionHandler = (peerId: string) => {
       if (peer.getIsHost()) {
         peer.untrackPeer(peerId)
         const leaverInfo = playersRef.current.find(p => p.id === peerId)
-        const updated = playersRef.current.filter(p => p.id !== peerId)
+        // 关键：保留断线玩家在 playersRef（用于宽限期内的重连识别）
+        // 仅在 lobby 阶段（游戏未开始）才从列表移除
+        const gameActive = !!gameRef.current && !gameRef.current.gameOver
+        const updated = gameActive
+          ? playersRef.current // 游戏进行中：保留，等重连
+          : playersRef.current.filter(p => p.id !== peerId) // 未开始游戏：移除
         playersRef.current = updated
         setOnlinePlayers(updated)
         playPlayerLeaveSound()
+        // 广播只包含"在线"玩家，避免 lobby 显示幽灵玩家
         peer.broadcast({
           type: 'room-info',
           payload: {
-            players: updated.map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
+            players: updated
+              .filter(p => !gameRef.current?.players.find(gp => gp.name === p.name && gp.disconnected))
+              .map(p => ({ id: p.id, name: p.name, isHost: p.isHost })),
           }
         })
-        // 如果游戏进行中，处理断线玩家的游戏状态
-        if (leaverInfo) {
+        // 如果游戏进行中，进入宽限期
+        if (leaverInfo && gameActive) {
           handlePlayerDisconnect(leaverInfo.name, peer)
         }
       } else {
@@ -682,6 +817,16 @@ export default function MonopolyGame() {
 
     peer.onMessage(messageHandler)
     peer.onDisconnection(disconnectionHandler)
+    // 重连状态回调：驱动 UI 浮层显示 "正在重连 N/5" / "连接失败"
+    peer.onConnectionStatusChange((status, message) => {
+      setConnectionStatus({ status, message })
+      // "已重新连接" 提示 1.5s 后自动消失
+      if (status === 'connected') {
+        setTimeout(() => {
+          setConnectionStatus(prev => (prev.status === 'connected' ? { status: null, message: '' } : prev))
+        }, 1500)
+      }
+    })
   }, [broadcastState])
 
   // ===== 创建房间 =====
@@ -762,18 +907,19 @@ export default function MonopolyGame() {
       setScreen('lobby')
 
       // 检测房间是否真实存在（等待房主回复 room-info）
+      // 30s 超时：避免网络波动或房主短暂断线导致误判
       const joinedPeer = peer // 捕获当前实例，防止超时回调误操作新实例
       setTimeout(() => {
         // 只有当前 peer 实例没变、且仍在 lobby、且未收到 room-info 时才判定失败
         if (!roomValidatedRef.current && screenRef.current === 'lobby' && peerRef.current === joinedPeer) {
-          setConnectionError('房间不存在或房主已离线')
+          setConnectionError('房间不存在或房主已离线（等待 30 秒无响应）')
           joinedPeer.destroy()
           peerRef.current = null
           setScreen('setup')
           setOnlineRole(null)
           setOnlinePlayers([])
         }
-      }, 10000)
+      }, 30000)
     } catch (err: any) {
       setConnectionError(`加入房间失败: ${err.message || '未知错误'}`)
     } finally {
@@ -977,7 +1123,7 @@ export default function MonopolyGame() {
 
   // ===== 掷骰子（UI 入口） =====
   const handleRoll = useCallback(() => {
-    if (!game || rolling || paused || !currentPlayer || currentPlayer.bankrupt) return
+    if (!game || rolling || paused || !currentPlayer || currentPlayer.bankrupt || currentPlayer.disconnected) return
     if (game.phase !== 'roll') return
     if (mode !== 'online' && currentPlayer.isAI) return
 
@@ -1203,7 +1349,7 @@ export default function MonopolyGame() {
       if (myIdx < 0 || myIdx !== latestGame.currentPlayer) return
     }
     const currentPlayerObj = latestGame.players[latestGame.currentPlayer]
-    if (!currentPlayerObj || currentPlayerObj.bankrupt) return
+    if (!currentPlayerObj || currentPlayerObj.bankrupt || currentPlayerObj.disconnected) return
 
     // Online guest: send card action to host
     if (mode === 'online' && onlineRole === 'guest') {
@@ -1398,6 +1544,9 @@ export default function MonopolyGame() {
     if (buyTimeoutRef.current) { clearTimeout(buyTimeoutRef.current); buyTimeoutRef.current = null }
     if (aiTimeoutRef.current) { clearTimeout(aiTimeoutRef.current); aiTimeoutRef.current = null }
     if (guestRollTimeoutRef.current) { clearTimeout(guestRollTimeoutRef.current); guestRollTimeoutRef.current = null }
+    // 清理所有宽限期定时器
+    graceTimersRef.current.forEach(t => clearTimeout(t))
+    graceTimersRef.current.clear()
     animatingRef.current = false
     pendingDiceRolledRef.current = []
     forcedDiceRef.current = null
@@ -1418,6 +1567,9 @@ export default function MonopolyGame() {
     }
     if (aiTimeoutRef.current) { clearTimeout(aiTimeoutRef.current); aiTimeoutRef.current = null }
     if (guestRollTimeoutRef.current) { clearTimeout(guestRollTimeoutRef.current); guestRollTimeoutRef.current = null }
+    // 清理所有宽限期定时器
+    graceTimersRef.current.forEach(t => clearTimeout(t))
+    graceTimersRef.current.clear()
     animatingRef.current = false
     pendingDiceRolledRef.current = []
     forcedDiceRef.current = null
@@ -1450,6 +1602,7 @@ export default function MonopolyGame() {
   }
 
   return (
+    <>
     <div className="flex flex-col md:flex-row bg-[#0f1419] overflow-hidden" style={{ height: '100dvh' }}>
       {/* 控制栏 */}
       {screen === 'game' && (
@@ -2029,6 +2182,7 @@ export default function MonopolyGame() {
                           <div>
                             <span className="text-white font-bold">{p.name}</span>
                             {p.bankrupt && <span className="text-xs text-red-400 ml-2">破产</span>}
+                            {p.disconnected && !p.bankrupt && <span className="text-xs text-yellow-400 ml-2 animate-pulse">掉线中</span>}
                           </div>
                         </div>
                         <div className="text-right">
@@ -2114,6 +2268,20 @@ export default function MonopolyGame() {
               const isCurrent = p.id === currentPlayer?.id
               const propValue = p.properties.reduce((sum, id) => sum + BOARD[id].price, 0)
               const displayMoney = Math.max(0, p.money)
+              if (p.disconnected && !p.bankrupt) {
+                return (
+                  <div key={p.id}
+                    className="p-2 rounded-xl flex items-center gap-2 opacity-70"
+                    style={{ background: 'rgba(250, 204, 21, 0.08)', border: '1px dashed rgba(250, 204, 21, 0.3)' }}>
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-base grayscale"
+                      style={{ background: p.color + '22', border: `1px solid ${p.color}66` }}>
+                      {p.avatar}
+                    </div>
+                    <span className="text-sm text-gray-300 font-medium flex-1 truncate">{p.name}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-bold whitespace-nowrap animate-pulse">掉线中 · 60s 宽限</span>
+                  </div>
+                )
+              }
               if (p.bankrupt) {
                 return (
                   <div key={p.id}
@@ -2245,7 +2413,7 @@ export default function MonopolyGame() {
                 {selectedCard.type === 'swap' && (
                   <div className="space-y-2">
                     <div className="text-xs text-gray-300 mb-1">选择要交换位置的玩家：</div>
-                    {game?.players.filter(p => p.id !== currentPlayer?.id && !p.bankrupt).map(p => (
+                    {game?.players.filter(p => p.id !== currentPlayer?.id && !p.bankrupt && !p.disconnected).map(p => (
                       <button key={p.id} onClick={() => handleUseCard(selectedCard, { playerIdx: p.id })}
                         className="w-full py-2.5 bg-white/8 rounded-lg text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2">
                         <span>{p.avatar}</span>
@@ -2342,7 +2510,7 @@ export default function MonopolyGame() {
             ) : isCurrentPlayerHuman && !rolling ? (
               <div className="space-y-2">
                 <button onClick={handleRoll}
-                  disabled={paused || rolling || currentPlayer?.bankrupt || (mode === 'online' && !isMyTurn)}
+                  disabled={paused || rolling || currentPlayer?.bankrupt || currentPlayer?.disconnected || (mode === 'online' && !isMyTurn)}
                   className="w-full py-2.5 md:py-3.5 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 active:scale-95 text-base md:text-lg disabled:opacity-50 disabled:cursor-not-allowed">
                   {mode === 'online' && !isMyTurn
                     ? `⏳ 等待 ${currentPlayer?.name} 操作...`
@@ -2419,5 +2587,49 @@ export default function MonopolyGame() {
         </div>
       )}
     </div>
+
+    {/* 重连状态浮层 */}
+    {connectionStatus.status && (
+      <div
+        className={`fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm transition-opacity
+          ${connectionStatus.status === 'failed' ? 'bg-black/70' : 'bg-black/50'}`}>
+        <div className={`px-6 py-5 rounded-2xl shadow-2xl border max-w-sm mx-4
+          ${connectionStatus.status === 'failed'
+            ? 'bg-red-950/95 border-red-500/40'
+            : connectionStatus.status === 'connected'
+            ? 'bg-green-950/95 border-green-500/40'
+            : 'bg-gray-900/95 border-blue-500/30'}`}>
+          <div className="flex items-center gap-3">
+            {connectionStatus.status === 'reconnecting' && (
+              <div className="w-5 h-5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin shrink-0"/>
+            )}
+            {connectionStatus.status === 'connected' && (
+              <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-white text-xs shrink-0">✓</div>
+            )}
+            {connectionStatus.status === 'failed' && (
+              <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center text-white text-xs shrink-0">!</div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className={`text-sm font-medium
+                ${connectionStatus.status === 'failed' ? 'text-red-300' :
+                  connectionStatus.status === 'connected' ? 'text-green-300' : 'text-blue-200'}`}>
+                {connectionStatus.message}
+              </div>
+              {connectionStatus.status === 'reconnecting' && (
+                <div className="text-xs text-gray-400 mt-0.5">请检查网络连接，自动重连中...</div>
+              )}
+              {connectionStatus.status === 'failed' && (
+                <button
+                  onClick={() => window.location.reload()}
+                  className="mt-2 px-3 py-1 text-xs rounded-md bg-red-500/20 text-red-200 border border-red-500/40 hover:bg-red-500/30 transition-colors">
+                  刷新页面
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
