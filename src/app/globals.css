@@ -2,11 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap');
-
-:root { --font: 'Noto Sans SC', -apple-system, sans-serif; }
+:root {
+  --font: var(--font-noto, 'Noto Sans SC'), -apple-system, sans-serif;
+  --color-bg-base: #0f1419;
+  --color-bg-surface: #1a2332;
+  --color-bg-elevated: #243040;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.2);
+  --color-accent: #f97316;
+  --color-accent-secondary: #ef4444;
+  --color-text-primary: #e0e0e0;
+  --color-text-secondary: #9ca3af;
+  --color-text-muted: #6b7280;
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { font-family: var(--font); height: 100%; height: 100dvh; background: #0f1419; color: #e0e0e0; overflow: hidden; }
+html, body { font-family: var(--font); height: 100%; height: 100dvh; background: var(--color-bg-base); color: var(--color-text-primary); overflow: hidden; }
 body { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 
 /* 移动端适配 */

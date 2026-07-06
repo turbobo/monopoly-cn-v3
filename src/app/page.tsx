@@ -1687,16 +1687,19 @@ export default function MonopolyGame() {
         <div className="absolute top-3 left-3 z-10 flex gap-2">
           {mode !== 'online' && (
             <button onClick={() => setPaused(!paused)}
-              className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 transition-colors">
+              aria-label={paused ? '继续游戏' : '暂停游戏'}
+              className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 active:scale-90 transition-all">
               {paused ? '▶️' : '⏸️'}
             </button>
           )}
           <button onClick={mode === 'online' ? leaveRoom : restartGame}
-            className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 transition-colors">
+            aria-label={mode === 'online' ? '离开房间' : '重新开始'}
+            className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 active:scale-90 transition-all">
             🔄
           </button>
           <button onClick={() => setMutedState(!muted)}
-            className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 transition-colors">
+            aria-label={muted ? '取消静音' : '静音'}
+            className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 active:scale-90 transition-all">
             {muted ? '🔇' : '🔊'}
           </button>
         </div>
@@ -1816,7 +1819,7 @@ export default function MonopolyGame() {
                 )}
                 {!owner && tile.price > 0 && (
                   <div className="py-1.5 px-2 mb-2 rounded-lg bg-white/5">
-                    <span className="text-[10px] text-gray-500">暂无拥有者</span>
+                    <span className="text-[10px] text-gray-400">暂无拥有者</span>
                   </div>
                 )}
 
@@ -1835,30 +1838,30 @@ export default function MonopolyGame() {
                 {tile.price > 0 && (
                   <div className="space-y-1.5 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-gray-500">价格</span>
+                      <span className="text-gray-400">价格</span>
                       <span className="text-amber-400 font-bold">¥{tile.price}</span>
                     </div>
                     {tile.rent.length > 0 && (
                       <>
                         <div className="flex justify-between">
-                          <span className="text-gray-500">基础租金</span>
+                          <span className="text-gray-400">基础租金</span>
                           <span className="text-gray-300">¥{tile.rent[0]}</span>
                         </div>
                         {tile.rent[1] && (
                           <div className="flex justify-between">
-                            <span className="text-gray-500">同色加成</span>
+                            <span className="text-gray-400">同色加成</span>
                             <span className="text-blue-400">¥{tile.rent[1]}</span>
                           </div>
                         )}
                         {tile.rent[2] && (
                           <div className="flex justify-between">
-                            <span className="text-gray-500">全套租金</span>
+                            <span className="text-gray-400">全套租金</span>
                             <span className="text-purple-400 font-medium">¥{tile.rent[2]}</span>
                           </div>
                         )}
                         {hike && owner && (
                           <div className="flex justify-between">
-                            <span className="text-gray-500">涨价后</span>
+                            <span className="text-gray-400">涨价后</span>
                             <span className="text-red-400 font-bold">¥{tile.rent[0] * 2}</span>
                           </div>
                         )}
@@ -1869,12 +1872,12 @@ export default function MonopolyGame() {
 
                 {/* 特殊格子描述 */}
                 {tile.type === 'chance' && (
-                  <div className="text-[10px] text-gray-500 mt-2">
+                  <div className="text-[10px] text-gray-400 mt-2">
                     停留时随机触发事件：获得/失去金钱、移动等
                   </div>
                 )}
                 {tile.type === 'tax' && (
-                  <div className="text-[10px] text-gray-500 mt-2 space-y-0.5">
+                  <div className="text-[10px] text-gray-400 mt-2 space-y-0.5">
                     {tile.name === '个人所得税' ? (
                       <div>停留时缴纳固定税金 <span className="text-orange-400 font-medium">¥100</span></div>
                     ) : (
@@ -1892,17 +1895,17 @@ export default function MonopolyGame() {
                   </div>
                 )}
                 {tile.type === 'goto_jail' && (
-                  <div className="text-[10px] text-gray-500 mt-2">
+                  <div className="text-[10px] text-gray-400 mt-2">
                     踩到此格直接送入监狱，无法经过起点领薪
                   </div>
                 )}
                 {tile.type === 'start' && (
-                  <div className="text-[10px] text-gray-500 mt-2">
+                  <div className="text-[10px] text-gray-400 mt-2">
                     经过或停留起点时获得 ¥{getStartBonus(game.round)} 工资
                   </div>
                 )}
                 {tile.type === 'parking' && (
-                  <div className="text-[10px] text-gray-500 mt-2">
+                  <div className="text-[10px] text-gray-400 mt-2">
                     安全区域，不会发生任何事件
                   </div>
                 )}
@@ -1941,11 +1944,11 @@ export default function MonopolyGame() {
               <p className="text-xl text-orange-300 mb-10 font-medium">中国行 · 在线版</p>
               <button
                 onClick={() => setScreen('setup')}
-                className="btn-sweep px-10 py-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-full text-white font-bold text-lg hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 hover:scale-105"
+                className="btn-sweep px-10 py-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-full text-white font-bold text-lg hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 hover:scale-105 active:scale-95"
               >
                 开始游戏
               </button>
-              <p className="text-gray-500 text-sm mt-6">掷骰子 · 买地皮 · 收租金 · 在线对战</p>
+              <p className="text-gray-400 text-sm mt-6">掷骰子 · 买地皮 · 收租金 · 在线对战</p>
             </div>
           </div>
         )}
@@ -2021,7 +2024,7 @@ export default function MonopolyGame() {
                         min={100}
                         step={100}
                       />
-                      <span className="text-gray-500 text-xs ml-1">自定义</span>
+                      <span className="text-gray-400 text-xs ml-1">自定义</span>
                     </div>
                   </div>
 
@@ -2042,7 +2045,7 @@ export default function MonopolyGame() {
                         </button>
                       ))}
                     </div>
-                    <div className="text-[10px] text-gray-500 mt-2 text-center">
+                    <div className="text-[10px] text-gray-400 mt-2 text-center">
                       {maxRounds === 0 ? '淘汰制：只剩1人存活时结束' : `最多${maxRounds}回合，到期按总资产判定胜负`}
                     </div>
                   </div>
@@ -2076,7 +2079,7 @@ export default function MonopolyGame() {
                   </div>
                   <button onClick={createRoom}
                     disabled={connecting || !playerName.trim()}
-                    className="w-full py-3.5 rounded-xl font-bold transition-all bg-green-600/20 border border-green-500 text-green-300 hover:bg-green-600/30 disabled:opacity-50">
+                    className="w-full py-3.5 rounded-xl font-bold transition-all bg-green-600/20 border border-green-500 text-green-300 hover:bg-green-600/30 disabled:opacity-50 active:scale-[0.98]">
                     {connecting ? '连接中...' : '🏠 创建房间'}
                   </button>
                   <div className="flex items-center gap-2">
@@ -2094,7 +2097,7 @@ export default function MonopolyGame() {
                     />
                     <button onClick={joinRoom}
                       disabled={connecting || !joinRoomId.trim() || !playerName.trim()}
-                      className="px-5 py-2.5 rounded-xl font-bold transition-all bg-blue-600/20 border border-blue-500 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50">
+                      className="px-5 py-2.5 rounded-xl font-bold transition-all bg-blue-600/20 border border-blue-500 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50 active:scale-[0.98]">
                       加入
                     </button>
                   </div>
@@ -2111,7 +2114,7 @@ export default function MonopolyGame() {
                 </button>
                 {mode !== 'online' && (
                   <button onClick={startGame}
-                    className="flex-[2] py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all">
+                    className="flex-[2] py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all active:scale-[0.98]">
                     开始！
                   </button>
                 )}
@@ -2223,7 +2226,7 @@ export default function MonopolyGame() {
                 {onlineRole === 'host' && (
                   <button onClick={startOnlineGame}
                     disabled={onlinePlayers.length < 2 || gameStarting}
-                    className="flex-[2] py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all disabled:opacity-50">
+                    className="flex-[2] py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all disabled:opacity-50 active:scale-[0.98]">
                     {gameStarting ? '启动中...' : `开始游戏 (${onlinePlayers.length}人)`}
                   </button>
                 )}
@@ -2252,7 +2255,7 @@ export default function MonopolyGame() {
                 {[...game.players].sort((a, b) => totalWealth(b) - totalWealth(a)).map((p, i) => {
                   const propVal = p.properties.reduce((sum, id) => sum + BOARD[id].price, 0)
                   return (
-                    <div key={p.id} className="rounded-lg p-3"
+                    <div key={p.id} className="rounded-xl p-3"
                       style={{ background: p.color + '15', borderColor: p.color + '33', borderWidth: 1 }}>
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-3">
@@ -2265,16 +2268,16 @@ export default function MonopolyGame() {
                         </div>
                         <div className="text-right">
                           <div className="text-amber-400 font-black text-lg">¥{totalWealth(p)}</div>
-                          <div className="text-[10px] text-gray-500">总资产</div>
+                          <div className="text-[10px] text-gray-400">总资产</div>
                         </div>
                       </div>
                       <div className="flex gap-3 text-xs">
                         <div className="flex-1 bg-black/20 rounded-md px-2 py-1 text-center">
-                          <div className="text-gray-500">现金</div>
+                          <div className="text-gray-400">现金</div>
                           <div className="font-bold" style={{ color: p.color }}>¥{p.money}</div>
                         </div>
                         <div className="flex-1 bg-black/20 rounded-md px-2 py-1 text-center">
-                          <div className="text-gray-500">地皮 ({p.properties.length}块)</div>
+                          <div className="text-gray-400">地皮 ({p.properties.length}块)</div>
                           <div className="font-bold text-amber-400">¥{propVal}</div>
                         </div>
                       </div>
@@ -2284,7 +2287,7 @@ export default function MonopolyGame() {
               </div>
 
               <button onClick={mode === 'online' ? leaveRoom : restartGame}
-                className="px-8 py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all">
+                className="px-8 py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all active:scale-95">
                 {mode === 'online' ? '返回大厅' : '再来一局'}
               </button>
             </div>
@@ -2298,15 +2301,15 @@ export default function MonopolyGame() {
               <h2 className="text-4xl font-bold text-white mb-8">⏸️ 游戏暂停</h2>
               <div className="space-y-3">
                 <button onClick={() => setPaused(false)}
-                  className="w-48 py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all block mx-auto">
+                  className="w-48 py-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all active:scale-95 block mx-auto">
                   ▶️ 继续游戏
                 </button>
                 <button onClick={restartGame}
-                  className="w-48 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-medium hover:bg-white/20 transition-all block mx-auto">
+                  className="w-48 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-medium hover:bg-white/20 transition-all active:scale-95 block mx-auto">
                   🔄 重新开始
                 </button>
                 <button onClick={() => { setScreen('menu'); setPaused(false) }}
-                  className="w-48 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-medium hover:bg-white/20 transition-all block mx-auto">
+                  className="w-48 py-3 bg-white/10 border border-white/20 rounded-xl text-white font-medium hover:bg-white/20 transition-all active:scale-95 block mx-auto">
                   🏠 返回主菜单
                 </button>
               </div>
@@ -2330,12 +2333,12 @@ export default function MonopolyGame() {
                 </div>
                 <div>
                   <div className="text-gray-100 font-bold text-sm md:text-lg">{currentPlayer?.name}的回合</div>
-                  <div className="text-gray-500 text-xs">第{game.round}回合{game.maxRounds > 0 ? ` / 共${game.maxRounds}回合` : ' · 淘汰制'}</div>
+                  <div className="text-gray-400 text-xs">第{game.round}回合{game.maxRounds > 0 ? ` / 共${game.maxRounds}回合` : ' · 淘汰制'}</div>
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-xs text-gray-500">现金 <span className="text-sm font-bold" style={{ color: currentPlayer?.color }}>¥{currentPlayer?.money}</span></div>
-                <div className="text-xs text-gray-500">资产 <span className="text-sm font-bold text-amber-400">¥{currentPlayer ? totalWealth(currentPlayer) : 0}</span></div>
+                <div className="text-xs text-gray-400">现金 <span className="text-sm font-bold" style={{ color: currentPlayer?.color }}>¥{currentPlayer?.money}</span></div>
+                <div className="text-xs text-gray-400">资产 <span className="text-sm font-bold text-amber-400">¥{currentPlayer ? totalWealth(currentPlayer) : 0}</span></div>
               </div>
             </div>
           </div>
@@ -2411,7 +2414,7 @@ export default function MonopolyGame() {
                             </span>
                           )}
                           {mode !== 'online' && p.isAI && (
-                            <span className="text-xs text-gray-500">
+                            <span className="text-xs text-gray-400">
                               ({p.aiPersonality === 'aggressive' ? '激进' : p.aiPersonality === 'conservative' ? '保守' : '平衡'})
                             </span>
                           )}
@@ -2448,7 +2451,7 @@ export default function MonopolyGame() {
                       <div className="h-full rounded-l-full transition-all duration-500" style={{ width: `${totalWealth(p) > 0 ? (displayMoney / totalWealth(p)) * 100 : 100}%`, background: p.color }} />
                       <div className="h-full rounded-r-full transition-all duration-500" style={{ width: `${totalWealth(p) > 0 ? (propValue / totalWealth(p)) * 100 : 0}%`, background: '#f59e0b' }} />
                     </div>
-                    <span className="text-[10px] text-gray-500 whitespace-nowrap">共¥{totalWealth(p)}</span>
+                    <span className="text-[10px] text-gray-400 whitespace-nowrap">共¥{totalWealth(p)}</span>
                   </div>
                 </div>
               )
@@ -2493,10 +2496,10 @@ export default function MonopolyGame() {
                     <div className="text-xs text-gray-300 mb-1">选择要交换位置的玩家：</div>
                     {game?.players.filter(p => p.id !== currentPlayer?.id && !p.bankrupt && !p.disconnected).map(p => (
                       <button key={p.id} onClick={() => handleUseCard(selectedCard, { playerIdx: p.id })}
-                        className="w-full py-2.5 bg-white/8 rounded-lg text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2">
+                        className="w-full py-2.5 bg-white/8 rounded-xl text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2">
                         <span>{p.avatar}</span>
                         <span className="text-sm text-gray-200">{p.name}</span>
-                        <span className="text-xs text-gray-500 ml-auto">¥{Math.max(0, p.money)}</span>
+                        <span className="text-xs text-gray-400 ml-auto">¥{Math.max(0, p.money)}</span>
                       </button>
                     ))}
                     <button onClick={() => setSelectedCard(null)}
@@ -2528,11 +2531,11 @@ export default function MonopolyGame() {
                 {selectedCard.type === 'free_pass' && (
                   <div className="flex gap-2">
                     <button onClick={() => handleUseCard(selectedCard)}
-                      className="flex-1 py-2.5 bg-blue-600 rounded-lg text-white text-sm font-bold hover:bg-blue-500 transition-colors">
+                      className="flex-1 py-2.5 bg-blue-600 rounded-xl text-white text-sm font-bold hover:bg-blue-500 transition-colors">
                       立即激活
                     </button>
                     <button onClick={() => setSelectedCard(null)}
-                      className="flex-1 py-2.5 bg-white/8 rounded-lg text-gray-400 text-sm hover:bg-white/10">
+                      className="flex-1 py-2.5 bg-white/8 rounded-xl text-gray-400 text-sm hover:bg-white/10">
                       取消
                     </button>
                   </div>
@@ -2549,13 +2552,13 @@ export default function MonopolyGame() {
                             className="w-full py-2 bg-white/8 rounded text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2 text-sm">
                             <span>{t.emoji}</span>
                             <span className="text-gray-200">{t.name}</span>
-                            <span className="text-xs text-gray-500 ml-auto">租金 ¥{t.rent[0]} → ¥{t.rent[0]*2}</span>
+                            <span className="text-xs text-gray-400 ml-auto">租金 ¥{t.rent[0]} → ¥{t.rent[0]*2}</span>
                           </button>
                         )
                       })}
                     </div>
                     {(!currentPlayer?.properties || currentPlayer.properties.length === 0) && (
-                      <div className="text-xs text-gray-500 text-center py-2">你没有地皮可以使用涨价卡</div>
+                      <div className="text-xs text-gray-400 text-center py-2">你没有地皮可以使用涨价卡</div>
                     )}
                     <button onClick={() => setSelectedCard(null)}
                       className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
@@ -2576,11 +2579,11 @@ export default function MonopolyGame() {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => handleBuy(true)}
-                    className="flex-1 py-2.5 bg-green-600 rounded-lg text-white text-sm font-bold hover:bg-green-500 transition-colors shadow-lg shadow-green-600/30">
+                    className="flex-1 py-2.5 bg-green-600 rounded-xl text-white text-sm font-bold hover:bg-green-500 transition-all shadow-lg shadow-green-600/30 active:scale-[0.98]">
                     💰 购买
                   </button>
                   <button onClick={() => handleBuy(false)}
-                    className="flex-1 py-2.5 bg-white/8 rounded-lg text-gray-400 text-sm hover:bg-white/15 transition-colors">
+                    className="flex-1 py-2.5 bg-white/8 rounded-xl text-gray-400 text-sm hover:bg-white/15 transition-all active:scale-[0.98]">
                     跳过
                   </button>
                 </div>
@@ -2599,7 +2602,7 @@ export default function MonopolyGame() {
                 {/* 道具卡按钮 */}
                 {currentPlayer && currentPlayer.cards.length > 0 && game?.phase === 'roll' && (mode !== 'online' || isMyTurn) && (
                   <button onClick={() => setShowCardPanel(!showCardPanel)}
-                    className="w-full py-2 bg-purple-600/30 border border-purple-500/40 rounded-lg text-purple-300 text-sm font-medium hover:bg-purple-600/50 transition-colors flex items-center justify-center gap-2">
+                    className="w-full py-2 bg-purple-600/30 border border-purple-500/40 rounded-xl text-purple-300 text-sm font-medium hover:bg-purple-600/50 transition-colors flex items-center justify-center gap-2">
                     🃏 道具卡 ({currentPlayer.cards.length})
                     {showCardPanel ? ' ▲' : ' ▼'}
                   </button>
@@ -2608,11 +2611,11 @@ export default function MonopolyGame() {
                   <div className="space-y-1.5 bounce-in">
                     {currentPlayer.cards.map((card, i) => (
                       <button key={card.id || i} onClick={() => setSelectedCard(card)}
-                        className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-lg text-left hover:bg-white/10 transition-colors flex items-center gap-2">
+                        className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-left hover:bg-white/10 transition-colors flex items-center gap-2">
                         <span className="text-lg">{card.emoji}</span>
                         <div className="flex-1">
                           <div className="text-sm text-gray-200 font-medium">{card.name}</div>
-                          <div className="text-[10px] text-gray-500">{card.description}</div>
+                          <div className="text-[10px] text-gray-400">{card.description}</div>
                         </div>
                       </button>
                     ))}
@@ -2628,7 +2631,7 @@ export default function MonopolyGame() {
 
           {/* 游戏日志 */}
           <div className="flex-1 overflow-hidden flex flex-col">
-            <div className="px-2.5 pt-2 md:px-4 md:pt-3 text-xs text-gray-500 font-medium">游戏日志</div>
+            <div className="px-2.5 pt-2 md:px-4 md:pt-3 text-xs text-gray-400 font-medium">游戏日志</div>
             <div ref={logRef} className="flex-1 overflow-y-auto p-2.5 md:p-4 space-y-1.5">
               {messages.map((msg, i) => {
                 const isLast = i === messages.length - 1
@@ -2643,7 +2646,7 @@ export default function MonopolyGame() {
 
           {/* 地皮归属 */}
           <div className="p-2 md:p-3 border-t border-white/8 max-h-28 md:max-h-44 overflow-y-auto">
-            <div className="text-xs text-gray-500 mb-2">地皮归属</div>
+            <div className="text-xs text-gray-400 mb-2">地皮归属</div>
             {game.players.filter(p => p.properties.length > 0).map(p => (
               <div key={p.id} className="mb-2">
                 <div className="flex items-center gap-1 mb-1">
@@ -2661,7 +2664,7 @@ export default function MonopolyGame() {
               </div>
             ))}
             {game.players.every(p => p.properties.length === 0) && (
-              <span className="text-xs text-gray-600">暂无地皮</span>
+              <span className="text-xs text-gray-500">暂无地皮</span>
             )}
           </div>
         </div>
