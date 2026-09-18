@@ -122,9 +122,12 @@ export class BoardRenderer {
     if (!container) return
     const isMobile = window.innerWidth < 768
     const maxW = isMobile
-      ? Math.min(window.innerWidth - 16, window.innerHeight * 0.45)
+      ? Math.min(window.innerWidth - 8, window.innerHeight * 0.62)
       : Math.min(window.innerWidth * 0.6, window.innerHeight * 0.9)
-    const w = Math.min(container.clientWidth - 8, container.clientHeight - 8, maxW)
+    // 扣除容器垂直 padding，避免棋盘侵入控制按钮区域（移动端顶部预留按钮栏）
+    const cs = getComputedStyle(container)
+    const padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+    const w = Math.min(container.clientWidth - 8, container.clientHeight - 8 - padV, maxW)
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     this.dpr = dpr
     this.canvas.width = w * dpr

@@ -171,6 +171,8 @@ export default function MonopolyGame() {
   // 同步游戏状态到 Canvas
   useEffect(() => {
     if (game && rendererRef.current) {
+      // 进入/重启游戏时容器尺寸会变化（信息面板出现），需重新计算棋盘尺寸
+      rendererRef.current.resize()
       rendererRef.current.draw(game.players, game.players[game.currentPlayer]?.position, {
         roadblocks: game.roadblocks,
         priceHikes: game.priceHikes,
@@ -1684,29 +1686,29 @@ export default function MonopolyGame() {
     <div className="flex flex-col md:flex-row bg-[#0f1419] overflow-hidden" style={{ height: '100dvh' }}>
       {/* 控制栏 */}
       {screen === 'game' && (
-        <div className="absolute top-3 left-3 z-10 flex gap-2">
+        <div className="absolute top-2 left-2 md:top-3 md:left-3 z-10 flex gap-1.5 md:gap-2">
           {mode !== 'online' && (
             <button onClick={() => setPaused(!paused)}
               aria-label={paused ? '继续游戏' : '暂停游戏'}
-              className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 active:scale-90 transition-all">
+              className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-base md:text-lg hover:bg-white/20 active:scale-90 transition-all">
               {paused ? '▶️' : '⏸️'}
             </button>
           )}
           <button onClick={mode === 'online' ? leaveRoom : restartGame}
             aria-label={mode === 'online' ? '离开房间' : '重新开始'}
-            className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 active:scale-90 transition-all">
+            className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-base md:text-lg hover:bg-white/20 active:scale-90 transition-all">
             🔄
           </button>
           <button onClick={() => setMutedState(!muted)}
             aria-label={muted ? '取消静音' : '静音'}
-            className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-lg hover:bg-white/20 active:scale-90 transition-all">
+            className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-base md:text-lg hover:bg-white/20 active:scale-90 transition-all">
             {muted ? '🔇' : '🔊'}
           </button>
         </div>
       )}
 
-      {/* 棋盘区域 */}
-      <div className="flex-1 relative flex items-center justify-center p-1 md:p-2 touch-none" style={{ minHeight: 'min(45dvh, 400px)' }}>
+      {/* 棋盘区域（移动端顶部预留控制栏空间，避免按钮遮挡棋盘） */}
+      <div className="flex-1 relative flex items-center justify-center px-1 pt-11 pb-1 md:p-2 touch-none" style={{ minHeight: 'min(52dvh, 430px)' }}>
         <canvas ref={canvasRef} className="touch-none cursor-pointer"
           onClick={handleCanvasClick}
           onTouchEnd={(e) => {
@@ -2320,31 +2322,31 @@ export default function MonopolyGame() {
 
       {/* ===== 信息面板 ===== */}
       {screen === 'game' && game && (
-        <div className="w-full max-h-[50dvh] md:max-h-none md:w-80 bg-[#1a2332] md:border-l border-t md:border-t-0 border-white/8 flex flex-col overflow-y-auto md:overflow-hidden shrink-0">
+        <div className="w-full max-h-[44dvh] md:max-h-none md:w-80 bg-[#1a2332] md:border-l border-t md:border-t-0 border-white/8 flex flex-col overflow-y-auto md:overflow-hidden shrink-0">
           {/* 当前玩家 */}
-          <div className="p-2.5 md:p-4 border-b border-white/8 relative overflow-hidden">
+          <div className="p-2 md:p-4 border-b border-white/8 relative overflow-hidden">
             <div className="absolute inset-0 opacity-10" style={{ background: `linear-gradient(135deg, ${currentPlayer?.color}44, transparent)` }} />
             <div className="absolute top-0 left-0 w-full h-1" style={{ background: currentPlayer?.color }} />
             <div className={`relative flex items-center justify-between ${turnAnim === 'out' ? 'turn-slide-out' : turnAnim === 'in' ? 'turn-slide-in' : ''}`}>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 md:w-12 md:h-12 rounded-full flex items-center justify-center text-xl md:text-2xl shadow-lg"
+              <div className="flex items-center gap-2.5 md:gap-3">
+                <div className="w-8 h-8 md:w-12 md:h-12 rounded-full flex items-center justify-center text-lg md:text-2xl shadow-lg"
                   style={{ background: currentPlayer?.color + '33', border: `2px solid ${currentPlayer?.color}` }}>
                   {currentPlayer?.avatar}
                 </div>
                 <div>
                   <div className="text-gray-100 font-bold text-sm md:text-lg">{currentPlayer?.name}的回合</div>
-                  <div className="text-gray-400 text-xs">第{game.round}回合{game.maxRounds > 0 ? ` / 共${game.maxRounds}回合` : ' · 淘汰制'}</div>
+                  <div className="text-[10px] md:text-xs text-gray-400">第{game.round}回合{game.maxRounds > 0 ? ` / 共${game.maxRounds}回合` : ' · 淘汰制'}</div>
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-xs text-gray-400">现金 <span className="text-sm font-bold" style={{ color: currentPlayer?.color }}>¥{currentPlayer?.money}</span></div>
-                <div className="text-xs text-gray-400">资产 <span className="text-sm font-bold text-amber-400">¥{currentPlayer ? totalWealth(currentPlayer) : 0}</span></div>
+                <div className="text-[10px] md:text-xs text-gray-400">现金 <span className="text-sm font-bold" style={{ color: currentPlayer?.color }}>¥{currentPlayer?.money}</span></div>
+                <div className="text-[10px] md:text-xs text-gray-400">资产 <span className="text-sm font-bold text-amber-400">¥{currentPlayer ? totalWealth(currentPlayer) : 0}</span></div>
               </div>
             </div>
           </div>
 
           {/* 玩家列表 */}
-          <div className="p-2 md:p-3 border-b border-white/8 space-y-1.5 md:space-y-2 max-h-40 md:max-h-60 overflow-y-auto">
+          <div className="p-1.5 md:p-3 border-b border-white/8 space-y-1 md:space-y-2 max-h-44 md:max-h-60 overflow-y-auto">
             {game.players.map(p => {
               const isCurrent = p.id === currentPlayer?.id
               const propValue = p.properties.reduce((sum, id) => sum + BOARD[id].price, 0)
@@ -2352,13 +2354,13 @@ export default function MonopolyGame() {
               if (p.disconnected && !p.bankrupt) {
                 return (
                   <div key={p.id}
-                    className="p-2 rounded-xl flex items-center gap-2 opacity-70"
+                    className="p-1.5 md:p-2 rounded-xl flex items-center gap-2 opacity-70"
                     style={{ background: 'rgba(250, 204, 21, 0.08)', border: '1px dashed rgba(250, 204, 21, 0.3)' }}>
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-base grayscale"
+                    <div className="w-6 h-6 md:w-7 md:h-7 rounded-full flex items-center justify-center text-sm md:text-base grayscale"
                       style={{ background: p.color + '22', border: `1px solid ${p.color}66` }}>
                       {p.avatar}
                     </div>
-                    <span className="text-sm text-gray-300 font-medium flex-1 truncate">{p.name}</span>
+                    <span className="text-xs md:text-sm text-gray-300 font-medium flex-1 truncate">{p.name}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-bold whitespace-nowrap animate-pulse">掉线中 · 60s 宽限</span>
                   </div>
                 )
@@ -2366,20 +2368,20 @@ export default function MonopolyGame() {
               if (p.bankrupt) {
                 return (
                   <div key={p.id}
-                    className="p-2 rounded-xl flex items-center gap-2 opacity-50"
+                    className="p-1.5 md:p-2 rounded-xl flex items-center gap-2 opacity-50"
                     style={{ background: 'rgba(255,255,255,0.03)' }}>
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-base grayscale"
+                    <div className="w-6 h-6 md:w-7 md:h-7 rounded-full flex items-center justify-center text-sm md:text-base grayscale"
                       style={{ background: p.color + '22', border: `1px solid ${p.color}66` }}>
                       {p.avatar}
                     </div>
-                    <span className="text-sm text-gray-400 font-medium flex-1 truncate">{p.name}</span>
+                    <span className="text-xs md:text-sm text-gray-400 font-medium flex-1 truncate">{p.name}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold whitespace-nowrap">已破产</span>
                   </div>
                 )
               }
               return (
                 <div key={p.id}
-                  className="p-1.5 md:p-2.5 rounded-xl transition-all relative"
+                  className="p-1 md:p-2.5 rounded-xl transition-all relative"
                   style={{
                     background: isCurrent ? p.color + '18' : 'rgba(255,255,255,0.03)',
                     borderWidth: isCurrent ? 1 : 0,
@@ -2395,9 +2397,45 @@ export default function MonopolyGame() {
                       </div>
                     </div>
                   )}
-                  <div className="flex items-center justify-between mb-1.5">
+                  {/* 移动端：单行紧凑布局 */}
+                  <div className="flex items-center gap-1.5 md:hidden">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-sm relative shrink-0"
+                      style={{ background: p.color + '33', border: `1.5px solid ${p.color}` }}>
+                      {p.avatar}
+                      {isCurrent && (
+                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-green-400 border border-white animate-pulse" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0 flex items-center gap-1">
+                      <span className="text-xs text-gray-200 font-medium truncate">{p.name}</span>
+                      {isCurrent && (
+                        <span className="text-[9px] px-1 py-px rounded-full font-bold shrink-0"
+                          style={{ background: p.color + '33', color: p.color }}>
+                          操作中
+                        </span>
+                      )}
+                      {mode !== 'online' && p.isAI && (
+                        <span className="text-[9px] text-gray-400 shrink-0">
+                          ({p.aiPersonality === 'aggressive' ? '激进' : p.aiPersonality === 'conservative' ? '保守' : '平衡'})
+                        </span>
+                      )}
+                      {p.freePassActive && <span className="text-[9px] shrink-0">🛡️</span>}
+                      {p.cards.length > 0 && (
+                        <span className="text-[9px] text-purple-300 shrink-0">🃏×{p.cards.length}</span>
+                      )}
+                      {game?.priceHikes.some(h => h.ownerPlayerId === p.id) && (
+                        <span className="text-[9px] shrink-0">📈</span>
+                      )}
+                    </div>
+                    <div className="text-right text-[10px] leading-tight shrink-0">
+                      <div className="font-bold" style={{ color: p.color }}>¥{displayMoney}</div>
+                      <div className="text-amber-400">{p.properties.length}地 ¥{propValue}</div>
+                    </div>
+                  </div>
+                  {/* 桌面端：两行布局 */}
+                  <div className="hidden md:flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center text-sm md:text-lg relative"
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg relative"
                         style={{ background: p.color + '33', border: `1.5px solid ${p.color}` }}>
                         {p.avatar}
                         {isCurrent && (
@@ -2459,7 +2497,7 @@ export default function MonopolyGame() {
           </div>
 
           {/* 操作区 */}
-          <div className="p-2.5 md:p-4 border-b border-white/8">
+          <div className="p-2 md:p-4 border-b border-white/8">
             {diceResult && !buyPrompt && !selectedCard && (
               <div className="text-center text-sm text-amber-400 font-bold mb-2 bounce-in">
                 🎲 {diceResult}
@@ -2629,8 +2667,8 @@ export default function MonopolyGame() {
             )}
           </div>
 
-          {/* 游戏日志 */}
-          <div className="flex-1 overflow-hidden flex flex-col">
+          {/* 游戏日志（移动端限高，桌面端自适应） */}
+          <div className="max-h-24 md:max-h-none md:flex-1 overflow-hidden flex flex-col">
             <div className="px-2.5 pt-2 md:px-4 md:pt-3 text-xs text-gray-400 font-medium">游戏日志</div>
             <div ref={logRef} className="flex-1 overflow-y-auto p-2.5 md:p-4 space-y-1.5">
               {messages.map((msg, i) => {
@@ -2645,7 +2683,7 @@ export default function MonopolyGame() {
           </div>
 
           {/* 地皮归属 */}
-          <div className="p-2 md:p-3 border-t border-white/8 max-h-28 md:max-h-44 overflow-y-auto">
+          <div className="p-2 md:p-3 border-t border-white/8 max-h-20 md:max-h-44 overflow-y-auto">
             <div className="text-xs text-gray-400 mb-2">地皮归属</div>
             {game.players.filter(p => p.properties.length > 0).map(p => (
               <div key={p.id} className="mb-2">

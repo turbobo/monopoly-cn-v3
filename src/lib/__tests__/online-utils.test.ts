@@ -6,8 +6,8 @@ import { GameState } from '../game-engine'
 function createMockGameState(overrides: Partial<GameState> = {}): GameState {
   return {
     players: [
-      { id: 1, name: 'Player1', avatar: '👤', money: 1000, position: 0, properties: [], inJail: false, jailTurns: 0, bankrupt: false, isAI: false, color: '#FF0000' },
-      { id: 2, name: 'Player2', avatar: '👥', money: 1000, position: 0, properties: [], inJail: false, jailTurns: 0, bankrupt: false, isAI: false, color: '#00FF00' },
+      { id: 1, name: 'Player1', avatar: '👤', money: 1000, position: 0, properties: [], inJail: false, jailTurns: 0, bankrupt: false, isAI: false, color: '#FF0000', cards: [], freePassActive: false },
+      { id: 2, name: 'Player2', avatar: '👥', money: 1000, position: 0, properties: [], inJail: false, jailTurns: 0, bankrupt: false, isAI: false, color: '#00FF00', cards: [], freePassActive: false },
     ],
     currentPlayer: 0,
     round: 1,
@@ -18,6 +18,9 @@ function createMockGameState(overrides: Partial<GameState> = {}): GameState {
     gameOver: false,
     winner: null,
     difficulty: 'normal',
+    roadblocks: [],
+    priceHikes: [],
+    lastCardRound: 0,
     ...overrides,
   }
 }
@@ -133,11 +136,12 @@ describe('mergeMessages', () => {
     expect(result).toEqual(['A', 'B', 'C'])
   })
 
-  it('无重叠（本地落后太多），返回远程消息', () => {
+  it('无重叠（本地落后太多），合并本地与远程消息（不丢本地历史）', () => {
     const localMsgs = ['old1', 'old2']
     const remoteMsgs = ['new1', 'new2', 'new3']
     const result = mergeMessages(localMsgs, remoteMsgs)
-    expect(result).toEqual(remoteMsgs)
+    // 实现语义：无重叠时合并两者并去重，保留本地完整历史
+    expect(result).toEqual(['old1', 'old2', 'new1', 'new2', 'new3'])
   })
 
   it('重复消息场景：使用 lastIndexOf 找最后一个 A 的位置', () => {
@@ -153,13 +157,12 @@ describe('mergeMessages', () => {
     const localMsgs = Array.from({ length: 100 }, (_, i) => `msg${i}`)
     const remoteMsgs = Array.from({ length: 50 }, (_, i) => `msg${i + 90}`) // 从 msg90 开始，与本地有重叠（msg90-msg99）
     
-    const trimmedRemote = trimMessages(remoteMsgs, 20) // 裁剪后为 msg30-msg49，无重叠
-    // 由于无重叠，应该返回 remoteMsgs
+    const trimmedRemote = trimMessages(remoteMsgs, 20) // 裁剪后为 msg120-msg139，均为本地没有的新消息
     const result = mergeMessages(localMsgs, trimmedRemote)
     
-    // 无重叠时返回远程消息（20条）
-    expect(result.length).toBe(20)
-    expect(result).toEqual(trimmedRemote)
+    // 无重叠 → 合并本地历史与远程新消息：100 + 20 = 120 条
+    expect(result.length).toBe(120)
+    expect(result).toEqual([...localMsgs, ...trimmedRemote])
   })
 
   it('边界情况：本地和远程完全相同', () => {
@@ -172,8 +175,8 @@ describe('mergeMessages', () => {
     const localMsgs = ['A', 'B', 'C', 'D']
     const remoteMsgs = ['A', 'B']
     const result = mergeMessages(localMsgs, remoteMsgs)
-    // lastLocal = 'D', remote中没有'D', overlapIdx = -1, 返回remote
-    expect(result).toEqual(remoteMsgs)
+    // lastLocal = 'D'，remote 中无 'D'，无重叠 → 合并去重，远程消息均在本地历史中
+    expect(result).toEqual(['A', 'B', 'C', 'D'])
   })
 
   it('边界情况：本地是远程的子集', () => {
