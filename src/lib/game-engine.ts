@@ -225,6 +225,11 @@ export function buyProperty(player: Player, tileId: number): boolean {
 // ===== 检查破产 =====
 export function checkBankrupt(player: Player): { bankrupt: boolean; soldTiles: number[] } {
   const soldTiles: number[] = []
+  // 零资产判定：现金为 0 且无地皮 → 同样判定破产（规则文档 §破产规则第4条）
+  if (player.money === 0 && player.properties.length === 0) {
+    player.bankrupt = true
+    return { bankrupt: true, soldTiles }
+  }
   if (player.money < 0) {
     // 尝试卖地（从最便宜的开始）
     const sorted = [...player.properties].sort((a, b) => BOARD[a].price - BOARD[b].price)
@@ -424,6 +429,7 @@ export function useSwapCard(gs: GameState, userPlayerId: number, targetPlayerId:
   const user = gs.players.find(p => p.id === userPlayerId)
   const target = gs.players.find(p => p.id === targetPlayerId)
   if (!user || !target || user.bankrupt || target.bankrupt) return ''
+  if (!user.cards.some(c => c.type === 'swap')) return ''
   const tmp = user.position
   user.position = target.position
   target.position = tmp

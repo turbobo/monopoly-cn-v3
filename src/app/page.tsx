@@ -3,24 +3,18 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { BoardRenderer } from '@/lib/board-renderer'
 import {
-  GameState, BOARD, BOARD_SIZE, Player, GameCard, CardType,
-  createGame, executeTurn, buyProperty, totalWealth, getStartBonus,
+  GameState, BOARD, Player, GameCard,
+  createGame, executeTurn, buyProperty, totalWealth,
   rollDice, finalizeTurn, nextPlayer, useRemoteDice, useSwapCard, useRoadblockCard,
   useFreePassCard, usePriceHikeCard, aiUseCardDecision,
 } from '@/lib/game-engine'
 import { playDiceRoll, playDiceLand, playStepSound, playBuySound, playPaySound, playBankruptSound, playPlayerJoinSound, playPlayerLeaveSound, setMuted } from '@/lib/sound'
 import { GoEasyManager, PeerMessage } from '@/lib/goeasy-manager'
 import { slimGame, trimMessages, mergeMessages } from '@/lib/online-utils'
-
-type Screen = 'menu' | 'setup' | 'lobby' | 'game' | 'end'
-type GameMode = 'ai' | 'local' | 'online'
-type OnlineRole = 'host' | 'guest' | null
-
-interface OnlinePlayer {
-  id: string
-  name: string
-  isHost: boolean
-}
+import ControlBar from '@/components/ControlBar'
+import TileInfoPopup from '@/components/TileInfoPopup'
+import GamePanel from '@/components/GamePanel'
+import { Screen, GameMode, OnlineRole, OnlinePlayer } from '@/lib/types'
 
 export default function MonopolyGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -159,7 +153,7 @@ export default function MonopolyGame() {
     }
   }, [])
 
-  // 清理 LeanCloud 连接
+  // 清理 GoEasy 连接
   useEffect(() => {
     return () => {
       if (peerRef.current) {
@@ -215,7 +209,7 @@ export default function MonopolyGame() {
 
   // ===== 在线模式：处理消息 =====
 
-  // ===== 注册 LeanCloud 消息处理 =====
+  // ===== 注册 GoEasy 消息处理 =====
   const setupPeerHandlers = useCallback((peer: GoEasyManager) => {
 
     // Guest 端播放 dice-rolled 动画（提取为函数，支持补播）
@@ -1072,7 +1066,6 @@ export default function MonopolyGame() {
   }
 
   const currentPlayer = game?.players[game.currentPlayer]
-  const isCurrentPlayerHuman = mode === 'online' ? true : (currentPlayer && !currentPlayer.isAI)
 
   // ===== 掷骰子（房主核心逻辑，房主自己掷和代替 Guest 掷都调用此函数） =====
   const executeHostRoll = useCallback(() => {
@@ -1686,25 +1679,14 @@ export default function MonopolyGame() {
     <div className="flex flex-col md:flex-row bg-[#0f1419] overflow-hidden" style={{ height: '100dvh' }}>
       {/* 控制栏 */}
       {screen === 'game' && (
-        <div className="absolute top-2 left-2 md:top-3 md:left-3 z-10 flex gap-1.5 md:gap-2">
-          {mode !== 'online' && (
-            <button onClick={() => setPaused(!paused)}
-              aria-label={paused ? '继续游戏' : '暂停游戏'}
-              className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-base md:text-lg hover:bg-white/20 active:scale-90 transition-all">
-              {paused ? '▶️' : '⏸️'}
-            </button>
-          )}
-          <button onClick={mode === 'online' ? leaveRoom : restartGame}
-            aria-label={mode === 'online' ? '离开房间' : '重新开始'}
-            className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-base md:text-lg hover:bg-white/20 active:scale-90 transition-all">
-            🔄
-          </button>
-          <button onClick={() => setMutedState(!muted)}
-            aria-label={muted ? '取消静音' : '静音'}
-            className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-white text-base md:text-lg hover:bg-white/20 active:scale-90 transition-all">
-            {muted ? '🔇' : '🔊'}
-          </button>
-        </div>
+        <ControlBar
+          mode={mode}
+          paused={paused}
+          muted={muted}
+          onPrimaryAction={mode === 'online' ? leaveRoom : restartGame}
+          onTogglePause={() => setPaused(!paused)}
+          onToggleMute={() => setMutedState(!muted)}
+        />
       )}
 
       {/* 棋盘区域（移动端顶部预留控制栏空间，避免按钮遮挡棋盘） */}
@@ -1727,194 +1709,15 @@ export default function MonopolyGame() {
         />
 
         {/* 地皮信息弹窗 */}
-        {tileInfo && game && (() => {
-          const tile = BOARD[tileInfo.tileIndex]
-          if (!tile) return null
-
-          // 查找拥有者
-          const owner = game.players.find(p => p.properties.includes(tile.id))
-
-          // 查找涨价状态
-          const hike = game.priceHikes?.find(h => h.tileId === tile.id)
-
-          // 查找路障及放置者
-          const roadblock = game.roadblocks?.find(r => r.tileId === tile.id)
-          const roadblockOwner = roadblock ? game.players.find(p => p.id === roadblock.ownerPlayerId) : null
-
-          // 计算弹窗位置：基于canvas容器
-          const boardArea = document.querySelector('.flex-1.relative.flex') as HTMLElement
-          const rect = boardArea?.getBoundingClientRect()
-          if (!rect) return null
-
-          const relX = tileInfo.x - rect.left
-          const relY = tileInfo.y - rect.top
-          const popW = Math.min(200, rect.width - 24)
-          const rawPopX = relX > rect.width / 2 ? relX - popW - 20 : relX + 20
-          const popX = Math.max(8, Math.min(rawPopX, rect.width - popW - 8))
-          const popY = Math.max(8, Math.min(relY - 60, rect.height - 100))
-          const maxPopH = rect.height - popY - 8
-
-          // 类型描述
-          const typeDesc: Record<string, string> = {
-            property: '商业地产',
-            railroad: '交通设施',
-            utility: '公用事业',
-            chance: '机会卡',
-            tax: '税务',
-            start: '起点',
-            jail: '监狱探访',
-            parking: '免费停车',
-            goto_jail: '入狱',
-          }
-
-          return (
-            <div
-              className="absolute z-30 pointer-events-auto bounce-in"
-              style={{ left: popX, top: popY, width: popW }}
-              onClick={(e) => e.stopPropagation()}
-              onTouchMove={(e) => e.stopPropagation()}
-            >
-              <div className="bg-[#1a1f2e]/95 backdrop-blur-md border border-white/15 rounded-xl p-3 shadow-2xl shadow-black/50 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
-                style={{ maxHeight: maxPopH }}>
-                {/* 头部 */}
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xl">{tile.emoji}</span>
-                    <span className="text-gray-100 font-bold text-sm">{tile.name}</span>
-                  </div>
-                  <button onClick={() => setTileInfo(null)}
-                    className="w-5 h-5 rounded-full bg-white/10 text-gray-400 text-xs flex items-center justify-center hover:bg-white/20 transition-colors">
-                    ✕
-                  </button>
-                </div>
-
-                {/* 类型标签 */}
-                <div className="flex items-center gap-1.5 mb-2.5">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-gray-400">
-                    {typeDesc[tile.type] || tile.type}
-                  </span>
-                  {tile.color && (
-                    <span className="w-3 h-3 rounded-full border border-white/20"
-                      style={{ backgroundColor: tile.color }} />
-                  )}
-                  {hike && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-medium">
-                      📈 涨价中({hike.roundsLeft}回合)
-                    </span>
-                  )}
-                  {roadblock && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-medium">
-                      🚧 路障
-                    </span>
-                  )}
-                </div>
-
-                {/* 拥有者 */}
-                {owner && (
-                  <div className="flex items-center gap-1.5 mb-2 py-1.5 px-2 rounded-lg bg-white/5">
-                    <span className="text-xs">{owner.avatar}</span>
-                    <span className="text-xs text-gray-300">{owner.name}</span>
-                    <span className="text-[10px] ml-auto px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">
-                      拥有者
-                    </span>
-                  </div>
-                )}
-                {!owner && tile.price > 0 && (
-                  <div className="py-1.5 px-2 mb-2 rounded-lg bg-white/5">
-                    <span className="text-[10px] text-gray-400">暂无拥有者</span>
-                  </div>
-                )}
-
-                {/* 路障放置者 */}
-                {roadblockOwner && (
-                  <div className="flex items-center gap-1.5 mb-2 py-1.5 px-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                    <span className="text-xs">{roadblockOwner.avatar}</span>
-                    <span className="text-xs text-orange-300">{roadblockOwner.name}</span>
-                    <span className="text-[10px] ml-auto px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">
-                      放置路障
-                    </span>
-                  </div>
-                )}
-
-                {/* 价格和租金 */}
-                {tile.price > 0 && (
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">价格</span>
-                      <span className="text-amber-400 font-bold">¥{tile.price}</span>
-                    </div>
-                    {tile.rent.length > 0 && (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">基础租金</span>
-                          <span className="text-gray-300">¥{tile.rent[0]}</span>
-                        </div>
-                        {tile.rent[1] && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">同色加成</span>
-                            <span className="text-blue-400">¥{tile.rent[1]}</span>
-                          </div>
-                        )}
-                        {tile.rent[2] && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">全套租金</span>
-                            <span className="text-purple-400 font-medium">¥{tile.rent[2]}</span>
-                          </div>
-                        )}
-                        {hike && owner && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-400">涨价后</span>
-                            <span className="text-red-400 font-bold">¥{tile.rent[0] * 2}</span>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {/* 特殊格子描述 */}
-                {tile.type === 'chance' && (
-                  <div className="text-[10px] text-gray-400 mt-2">
-                    停留时随机触发事件：获得/失去金钱、移动等
-                  </div>
-                )}
-                {tile.type === 'tax' && (
-                  <div className="text-[10px] text-gray-400 mt-2 space-y-0.5">
-                    {tile.name === '个人所得税' ? (
-                      <div>停留时缴纳固定税金 <span className="text-orange-400 font-medium">¥100</span></div>
-                    ) : (
-                      <>
-                        <div>停留时缴纳房产税：基础 ¥50 + 每块地 ¥20</div>
-                        <div>上限 ¥300</div>
-                        {(() => {
-                          const cp = game.players[game.currentPlayer]
-                          const count = cp?.properties?.length || 0
-                          const tax = Math.min(50 + count * 20, 300)
-                          return <div className="text-orange-400 font-medium">当前需缴：¥{tax}（你有 {count} 块地）</div>
-                        })()}
-                      </>
-                    )}
-                  </div>
-                )}
-                {tile.type === 'goto_jail' && (
-                  <div className="text-[10px] text-gray-400 mt-2">
-                    踩到此格直接送入监狱，无法经过起点领薪
-                  </div>
-                )}
-                {tile.type === 'start' && (
-                  <div className="text-[10px] text-gray-400 mt-2">
-                    经过或停留起点时获得 ¥{getStartBonus(game.round)} 工资
-                  </div>
-                )}
-                {tile.type === 'parking' && (
-                  <div className="text-[10px] text-gray-400 mt-2">
-                    安全区域，不会发生任何事件
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })()}
+        {tileInfo && game && (
+          <TileInfoPopup
+            tileIndex={tileInfo.tileIndex}
+            x={tileInfo.x}
+            y={tileInfo.y}
+            game={game}
+            onClose={() => setTileInfo(null)}
+          />
+        )}
 
         {/* 主菜单 */}
         {screen === 'menu' && (
@@ -2322,390 +2125,26 @@ export default function MonopolyGame() {
 
       {/* ===== 信息面板 ===== */}
       {screen === 'game' && game && (
-        <div className="w-full max-h-[44dvh] md:max-h-none md:w-80 bg-[#1a2332] md:border-l border-t md:border-t-0 border-white/8 flex flex-col overflow-y-auto md:overflow-hidden shrink-0">
-          {/* 当前玩家 */}
-          <div className="p-2 md:p-4 border-b border-white/8 relative overflow-hidden">
-            <div className="absolute inset-0 opacity-10" style={{ background: `linear-gradient(135deg, ${currentPlayer?.color}44, transparent)` }} />
-            <div className="absolute top-0 left-0 w-full h-1" style={{ background: currentPlayer?.color }} />
-            <div className={`relative flex items-center justify-between ${turnAnim === 'out' ? 'turn-slide-out' : turnAnim === 'in' ? 'turn-slide-in' : ''}`}>
-              <div className="flex items-center gap-2.5 md:gap-3">
-                <div className="w-8 h-8 md:w-12 md:h-12 rounded-full flex items-center justify-center text-lg md:text-2xl shadow-lg"
-                  style={{ background: currentPlayer?.color + '33', border: `2px solid ${currentPlayer?.color}` }}>
-                  {currentPlayer?.avatar}
-                </div>
-                <div>
-                  <div className="text-gray-100 font-bold text-sm md:text-lg">{currentPlayer?.name}的回合</div>
-                  <div className="text-[10px] md:text-xs text-gray-400">第{game.round}回合{game.maxRounds > 0 ? ` / 共${game.maxRounds}回合` : ' · 淘汰制'}</div>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-[10px] md:text-xs text-gray-400">现金 <span className="text-sm font-bold" style={{ color: currentPlayer?.color }}>¥{currentPlayer?.money}</span></div>
-                <div className="text-[10px] md:text-xs text-gray-400">资产 <span className="text-sm font-bold text-amber-400">¥{currentPlayer ? totalWealth(currentPlayer) : 0}</span></div>
-              </div>
-            </div>
-          </div>
-
-          {/* 玩家列表 */}
-          <div className="p-1.5 md:p-3 border-b border-white/8 space-y-1 md:space-y-2 max-h-44 md:max-h-60 overflow-y-auto">
-            {game.players.map(p => {
-              const isCurrent = p.id === currentPlayer?.id
-              const propValue = p.properties.reduce((sum, id) => sum + BOARD[id].price, 0)
-              const displayMoney = Math.max(0, p.money)
-              if (p.disconnected && !p.bankrupt) {
-                return (
-                  <div key={p.id}
-                    className="p-1.5 md:p-2 rounded-xl flex items-center gap-2 opacity-70"
-                    style={{ background: 'rgba(250, 204, 21, 0.08)', border: '1px dashed rgba(250, 204, 21, 0.3)' }}>
-                    <div className="w-6 h-6 md:w-7 md:h-7 rounded-full flex items-center justify-center text-sm md:text-base grayscale"
-                      style={{ background: p.color + '22', border: `1px solid ${p.color}66` }}>
-                      {p.avatar}
-                    </div>
-                    <span className="text-xs md:text-sm text-gray-300 font-medium flex-1 truncate">{p.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-bold whitespace-nowrap animate-pulse">掉线中 · 60s 宽限</span>
-                  </div>
-                )
-              }
-              if (p.bankrupt) {
-                return (
-                  <div key={p.id}
-                    className="p-1.5 md:p-2 rounded-xl flex items-center gap-2 opacity-50"
-                    style={{ background: 'rgba(255,255,255,0.03)' }}>
-                    <div className="w-6 h-6 md:w-7 md:h-7 rounded-full flex items-center justify-center text-sm md:text-base grayscale"
-                      style={{ background: p.color + '22', border: `1px solid ${p.color}66` }}>
-                      {p.avatar}
-                    </div>
-                    <span className="text-xs md:text-sm text-gray-400 font-medium flex-1 truncate">{p.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold whitespace-nowrap">已破产</span>
-                  </div>
-                )
-              }
-              return (
-                <div key={p.id}
-                  className="p-1 md:p-2.5 rounded-xl transition-all relative"
-                  style={{
-                    background: isCurrent ? p.color + '18' : 'rgba(255,255,255,0.03)',
-                    borderWidth: isCurrent ? 1 : 0,
-                    borderColor: isCurrent ? p.color + '44' : 'transparent',
-                    boxShadow: isCurrent ? `0 0 0 2px ${p.color}33, 0 0 12px ${p.color}15` : 'none',
-                  }}>
-                  {isCurrent && (
-                    <div className="absolute -left-1 top-1/2 -translate-y-1/2 flex items-center">
-                      <div className="animate-pulse">
-                        <svg width="14" height="20" viewBox="0 0 14 20" fill="none">
-                          <path d="M0 10L14 0V20L0 10Z" fill={p.color} />
-                        </svg>
-                      </div>
-                    </div>
-                  )}
-                  {/* 移动端：单行紧凑布局 */}
-                  <div className="flex items-center gap-1.5 md:hidden">
-                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-sm relative shrink-0"
-                      style={{ background: p.color + '33', border: `1.5px solid ${p.color}` }}>
-                      {p.avatar}
-                      {isCurrent && (
-                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-green-400 border border-white animate-pulse" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0 flex items-center gap-1">
-                      <span className="text-xs text-gray-200 font-medium truncate">{p.name}</span>
-                      {isCurrent && (
-                        <span className="text-[9px] px-1 py-px rounded-full font-bold shrink-0"
-                          style={{ background: p.color + '33', color: p.color }}>
-                          操作中
-                        </span>
-                      )}
-                      {mode !== 'online' && p.isAI && (
-                        <span className="text-[9px] text-gray-400 shrink-0">
-                          ({p.aiPersonality === 'aggressive' ? '激进' : p.aiPersonality === 'conservative' ? '保守' : '平衡'})
-                        </span>
-                      )}
-                      {p.freePassActive && <span className="text-[9px] shrink-0">🛡️</span>}
-                      {p.cards.length > 0 && (
-                        <span className="text-[9px] text-purple-300 shrink-0">🃏×{p.cards.length}</span>
-                      )}
-                      {game?.priceHikes.some(h => h.ownerPlayerId === p.id) && (
-                        <span className="text-[9px] shrink-0">📈</span>
-                      )}
-                    </div>
-                    <div className="text-right text-[10px] leading-tight shrink-0">
-                      <div className="font-bold" style={{ color: p.color }}>¥{displayMoney}</div>
-                      <div className="text-amber-400">{p.properties.length}地 ¥{propValue}</div>
-                    </div>
-                  </div>
-                  {/* 桌面端：两行布局 */}
-                  <div className="hidden md:flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg relative"
-                        style={{ background: p.color + '33', border: `1.5px solid ${p.color}` }}>
-                        {p.avatar}
-                        {isCurrent && (
-                          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-400 border border-white animate-pulse" />
-                        )}
-                      </div>
-                      <div>
-                        <div className="text-sm text-gray-200 font-medium flex items-center gap-1.5">
-                          {p.name}
-                          {isCurrent && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
-                              style={{ background: p.color + '33', color: p.color }}>
-                              操作中
-                            </span>
-                          )}
-                          {mode !== 'online' && p.isAI && (
-                            <span className="text-xs text-gray-400">
-                              ({p.aiPersonality === 'aggressive' ? '激进' : p.aiPersonality === 'conservative' ? '保守' : '平衡'})
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs" style={{ color: p.color }}>{p.properties.length}块地</span>
-                          {/* 道具卡状态 */}
-                          {p.freePassActive && (
-                            <span className="text-[10px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 flex items-center gap-0.5">
-                              🛡️ 免费卡
-                            </span>
-                          )}
-                          {p.cards.length > 0 && (
-                            <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-0.5">
-                              🃏 ×{p.cards.length}
-                              <span className="opacity-60 ml-0.5">{p.cards.map(c => c.emoji).join('')}</span>
-                            </span>
-                          )}
-                          {game?.priceHikes.some(h => h.ownerPlayerId === p.id) && (
-                            <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              📈 涨价中
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold" style={{ color: p.color }}>💰 ¥{displayMoney}</div>
-                      <div className="text-xs text-amber-400 font-medium">🏠 ¥{propValue}</div>
-                    </div>
-                  </div>
-                  <div className="hidden md:flex items-center gap-2 mt-1">
-                    <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden flex">
-                      <div className="h-full rounded-l-full transition-all duration-500" style={{ width: `${totalWealth(p) > 0 ? (displayMoney / totalWealth(p)) * 100 : 100}%`, background: p.color }} />
-                      <div className="h-full rounded-r-full transition-all duration-500" style={{ width: `${totalWealth(p) > 0 ? (propValue / totalWealth(p)) * 100 : 0}%`, background: '#f59e0b' }} />
-                    </div>
-                    <span className="text-[10px] text-gray-400 whitespace-nowrap">共¥{totalWealth(p)}</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* 操作区 */}
-          <div className="p-2 md:p-4 border-b border-white/8">
-            {diceResult && !buyPrompt && !selectedCard && (
-              <div className="text-center text-sm text-amber-400 font-bold mb-2 bounce-in">
-                🎲 {diceResult}
-              </div>
-            )}
-            {selectedCard ? (
-              <div className="card-flip-in">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">{selectedCard.emoji}</span>
-                  <span className="text-gray-100 font-bold">{selectedCard.name}</span>
-                </div>
-                <div className="text-xs text-gray-400 mb-3">{selectedCard.description}</div>
-
-                {selectedCard.type === 'remote_dice' && (
-                  <div className="space-y-2">
-                    <div className="text-xs text-gray-300 mb-1">选择点数 (2-12)：</div>
-                    <div className="grid grid-cols-6 gap-1.5">
-                      {[2,3,4,5,6,7,8,9,10,11,12].map(n => (
-                        <button key={n} onClick={() => handleUseCard(selectedCard, { diceTotal: n })}
-                          className="py-2 bg-white/10 rounded text-white text-sm font-bold hover:bg-amber-500/40 transition-colors">
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                    <button onClick={() => setSelectedCard(null)}
-                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
-                      取消
-                    </button>
-                  </div>
-                )}
-
-                {selectedCard.type === 'swap' && (
-                  <div className="space-y-2">
-                    <div className="text-xs text-gray-300 mb-1">选择要交换位置的玩家：</div>
-                    {game?.players.filter(p => p.id !== currentPlayer?.id && !p.bankrupt && !p.disconnected).map(p => (
-                      <button key={p.id} onClick={() => handleUseCard(selectedCard, { playerIdx: p.id })}
-                        className="w-full py-2.5 bg-white/8 rounded-xl text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2">
-                        <span>{p.avatar}</span>
-                        <span className="text-sm text-gray-200">{p.name}</span>
-                        <span className="text-xs text-gray-400 ml-auto">¥{Math.max(0, p.money)}</span>
-                      </button>
-                    ))}
-                    <button onClick={() => setSelectedCard(null)}
-                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
-                      取消
-                    </button>
-                  </div>
-                )}
-
-                {selectedCard.type === 'roadblock' && (
-                  <div className="space-y-2">
-                    <div className="text-xs text-gray-300 mb-1">选择放置路障的格子：</div>
-                    <div className="max-h-40 overflow-y-auto space-y-1">
-                      {BOARD.filter(t => t.type === 'property' || t.type === 'railroad' || t.type === 'utility').map(t => (
-                        <button key={t.id} onClick={() => handleUseCard(selectedCard, { tileId: t.id })}
-                          className="w-full py-2 bg-white/8 rounded text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2 text-sm">
-                          <span>{t.emoji}</span>
-                          <span className="text-gray-200">{t.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                    <button onClick={() => setSelectedCard(null)}
-                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
-                      取消
-                    </button>
-                  </div>
-                )}
-
-                {selectedCard.type === 'free_pass' && (
-                  <div className="flex gap-2">
-                    <button onClick={() => handleUseCard(selectedCard)}
-                      className="flex-1 py-2.5 bg-blue-600 rounded-xl text-white text-sm font-bold hover:bg-blue-500 transition-colors">
-                      立即激活
-                    </button>
-                    <button onClick={() => setSelectedCard(null)}
-                      className="flex-1 py-2.5 bg-white/8 rounded-xl text-gray-400 text-sm hover:bg-white/10">
-                      取消
-                    </button>
-                  </div>
-                )}
-
-                {selectedCard.type === 'price_hike' && (
-                  <div className="space-y-2">
-                    <div className="text-xs text-gray-300 mb-1">选择要涨价的地皮（你的地皮）：</div>
-                    <div className="max-h-40 overflow-y-auto space-y-1">
-                      {(currentPlayer?.properties || []).map(tid => {
-                        const t = BOARD[tid]
-                        return (
-                          <button key={tid} onClick={() => handleUseCard(selectedCard, { tileId: tid })}
-                            className="w-full py-2 bg-white/8 rounded text-left px-3 hover:bg-white/15 transition-colors flex items-center gap-2 text-sm">
-                            <span>{t.emoji}</span>
-                            <span className="text-gray-200">{t.name}</span>
-                            <span className="text-xs text-gray-400 ml-auto">租金 ¥{t.rent[0]} → ¥{t.rent[0]*2}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {(!currentPlayer?.properties || currentPlayer.properties.length === 0) && (
-                      <div className="text-xs text-gray-400 text-center py-2">你没有地皮可以使用涨价卡</div>
-                    )}
-                    <button onClick={() => setSelectedCard(null)}
-                      className="w-full mt-2 py-2 bg-white/5 rounded text-gray-400 text-sm hover:bg-white/10">
-                      取消
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : buyPrompt ? (
-              <div className="bounce-in">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">{buyPrompt.tile.emoji}</span>
-                  <span className="text-gray-100 font-bold">{buyPrompt.tile.name}</span>
-                </div>
-                <div className="text-xs text-gray-400 mb-3">
-                  价格 ¥{buyPrompt.tile.price} · 基础租金 ¥{buyPrompt.tile.rent[0]}
-                  {buyPrompt.tile.rent[2] && ` · 全套租金 ¥${buyPrompt.tile.rent[2]}`}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleBuy(true)}
-                    className="flex-1 py-2.5 bg-green-600 rounded-xl text-white text-sm font-bold hover:bg-green-500 transition-all shadow-lg shadow-green-600/30 active:scale-[0.98]">
-                    💰 购买
-                  </button>
-                  <button onClick={() => handleBuy(false)}
-                    className="flex-1 py-2.5 bg-white/8 rounded-xl text-gray-400 text-sm hover:bg-white/15 transition-all active:scale-[0.98]">
-                    跳过
-                  </button>
-                </div>
-              </div>
-            ) : isCurrentPlayerHuman && !rolling ? (
-              <div className="space-y-2">
-                <button onClick={handleRoll}
-                  disabled={paused || rolling || currentPlayer?.bankrupt || (currentPlayer?.disconnected && currentPlayer?.name !== playerName) || (mode === 'online' && !isMyTurn)}
-                  className="w-full py-2.5 md:py-3.5 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl text-white font-bold hover:from-orange-400 hover:to-red-400 transition-all shadow-lg shadow-orange-500/30 active:scale-95 text-base md:text-lg disabled:opacity-50 disabled:cursor-not-allowed">
-                  {mode === 'online' && !isMyTurn
-                    ? `⏳ 等待 ${currentPlayer?.name} 操作...`
-                    : currentPlayer?.disconnected && currentPlayer?.name === playerName
-                    ? '🎲 重连成功，继续掷骰子'
-                    : '🎲 掷骰子'}
-                </button>
-                {/* 道具卡按钮 */}
-                {currentPlayer && currentPlayer.cards.length > 0 && game?.phase === 'roll' && (mode !== 'online' || isMyTurn) && (
-                  <button onClick={() => setShowCardPanel(!showCardPanel)}
-                    className="w-full py-2 bg-purple-600/30 border border-purple-500/40 rounded-xl text-purple-300 text-sm font-medium hover:bg-purple-600/50 transition-colors flex items-center justify-center gap-2">
-                    🃏 道具卡 ({currentPlayer.cards.length})
-                    {showCardPanel ? ' ▲' : ' ▼'}
-                  </button>
-                )}
-                {showCardPanel && currentPlayer && currentPlayer.cards.length > 0 && (
-                  <div className="space-y-1.5 bounce-in">
-                    {currentPlayer.cards.map((card, i) => (
-                      <button key={card.id || i} onClick={() => setSelectedCard(card)}
-                        className="w-full py-2 px-3 bg-white/5 border border-white/10 rounded-xl text-left hover:bg-white/10 transition-colors flex items-center gap-2">
-                        <span className="text-lg">{card.emoji}</span>
-                        <div className="flex-1">
-                          <div className="text-sm text-gray-200 font-medium">{card.name}</div>
-                          <div className="text-[10px] text-gray-400">{card.description}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-center text-gray-500 py-3 animate-pulse">
-                {rolling ? '🎲 骰子翻滚中...' : '⏳ 等待中...'}
-              </div>
-            )}
-          </div>
-
-          {/* 游戏日志（移动端限高，桌面端自适应） */}
-          <div className="max-h-24 md:max-h-none md:flex-1 overflow-hidden flex flex-col">
-            <div className="px-2.5 pt-2 md:px-4 md:pt-3 text-xs text-gray-400 font-medium">游戏日志</div>
-            <div ref={logRef} className="flex-1 overflow-y-auto p-2.5 md:p-4 space-y-1.5">
-              {messages.map((msg, i) => {
-                const isLast = i === messages.length - 1
-                return (
-                  <div key={i} className={`text-xs transition-all ${isLast ? 'text-gray-100 font-medium fade-in' : 'text-gray-500'}`}>
-                    {msg}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* 地皮归属 */}
-          <div className="p-2 md:p-3 border-t border-white/8 max-h-20 md:max-h-44 overflow-y-auto">
-            <div className="text-xs text-gray-400 mb-2">地皮归属</div>
-            {game.players.filter(p => p.properties.length > 0).map(p => (
-              <div key={p.id} className="mb-2">
-                <div className="flex items-center gap-1 mb-1">
-                  <span className="text-xs">{p.avatar}</span>
-                  <span className="text-xs font-medium" style={{ color: p.color }}>{p.name}</span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {p.properties.map(id => (
-                    <span key={id} className="text-xs px-1.5 py-0.5 rounded text-white font-medium"
-                      style={{ background: BOARD[id].color + '99' }}>
-                      {BOARD[id].name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {game.players.every(p => p.properties.length === 0) && (
-              <span className="text-xs text-gray-500">暂无地皮</span>
-            )}
-          </div>
-        </div>
+        <GamePanel
+          game={game}
+          messages={messages}
+          buyPrompt={buyPrompt}
+          selectedCard={selectedCard}
+          showCardPanel={showCardPanel}
+          diceResult={diceResult}
+          rolling={rolling}
+          paused={paused}
+          isMyTurn={isMyTurn}
+          myName={playerName}
+          mode={mode}
+          turnAnim={turnAnim}
+          logRef={logRef}
+          onRoll={handleRoll}
+          onBuy={handleBuy}
+          onUseCard={handleUseCard}
+          onSelectCard={setSelectedCard}
+          onToggleCardPanel={setShowCardPanel}
+        />
       )}
     </div>
 
